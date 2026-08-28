@@ -1,32 +1,18 @@
 services:
-  hub:
+  app:
     build: .
-    command: python -m hub.main
     env_file: .env
-    ports:
-      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
-    depends_on:
-      - redis
+    ports:
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
+    command: uvicorn app.api:app --host 0.0.0.0 --port 8000
 
-  watcher:
+  scheduler:
     build: .
-    command: python -m needles.watcher
     env_file: .env
-    depends_on:
-      - redis
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
-
-  researcher:
-    build: .
-    command: python -m needles.researcher
-    env_file: .env
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
+    command: python -m app.scheduler

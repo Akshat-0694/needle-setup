@@ -1,12 +1,10 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-COPY hub ./hub
-COPY core ./core
-COPY needles ./needles
-COPY config ./config
+COPY pyproject.toml .
+COPY app ./app
 
-CMD ["python", "-m", "hub.main"]
+RUN pip install --no-cache-dir .
+
+CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
