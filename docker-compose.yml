@@ -1,0 +1,32 @@
+services:
+  hub:
+    build: .
+    command: python -m hub.main
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  watcher:
+    build: .
+    command: python -m needles.watcher
+    env_file: .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  researcher:
+    build: .
+    command: python -m needles.researcher
+    env_file: .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
