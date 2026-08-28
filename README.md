@@ -1,149 +1,53 @@
-# Needle Daily
+# Needle Daily V1
+Personal task automation using Cactus Needle 2.0.10.
 
-An always-on personal task system using Cactus Needle 2 as the tiny tool-calling model.
+## Services
+- app: FastAPI control API + Task Needle
+- scheduler: reminder checker
+- telegram: Telegram polling transport
+- SQLite: persistent tasks/events
 
-Official Needle:
-https://github.com/cactus-compute/needle
-
-Needle 2 provides the model/tool-calling layer. This repository provides the personal-agent layer around it:
-- task scheduler
-- local task state
-- agent registry
-- safe read-only daily agents
-- FastAPI control API
-- logs
-- Docker deployment
-
-## Current agents
-
-### Morning Brief
-Runs on schedule and collects:
-- current time
-- local system health
-- configured tasks
-
-It is deliberately deterministic first. Needle is used where tool selection/reasoning is useful.
-
-### Research
-Accepts a natural-language question and lets Needle choose from a small research tool surface.
-
-### System
-Reports CPU, memory and disk information.
-
-## Safety model
-
-V0 is read-only.
-
-No:
-- email sending
-- shell execution by the model
-- arbitrary filesystem writes
-- GitHub writes
-- financial actions
-- browser automation
-
-Those should be added only behind explicit approval and permissions.
-
-## EC2: Amazon Linux 2023
-
-Install Docker:
-
+## Amazon Linux 2023
 ```bash
-sudo dnf update -y
-sudo dnf install -y docker git
+sudo dnf install -y docker git curl
 sudo systemctl enable --now docker
 sudo usermod -aG docker ec2-user
 ```
-
 Log out and back in.
 
-Verify:
-
-```bash
-docker --version
-```
-
-If Docker Compose is unavailable, install the Compose plugin using the current Docker/Amazon Linux instructions rather than downloading an untrusted binary.
-
-## Local Python test
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-cp .env.example .env
-python -m app.cli doctor
-python -m app.cli run "Give me a morning brief"
-```
-
-The first Needle invocation downloads/caches its inference engine.
-
-## Docker
-
+## Configure
 ```bash
 cp .env.example .env
-docker compose up -d --build
-docker compose logs -f
+nano .env
 ```
 
-Health:
+Set `TELEGRAM_BOT_TOKEN` from @BotFather. Set `TELEGRAM_CHAT_ID` to your numeric chat ID. Never commit `.env`.
 
+## Start
 ```bash
+./scripts/start.sh
 curl http://127.0.0.1:8000/health
 ```
 
-Create a task:
-
+## Test Task Needle
 ```bash
-curl -X POST http://127.0.0.1:8000/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{"agent":"research","prompt":"Explain what CUDA unified memory is."}'
+curl -X POST http://127.0.0.1:8000/message   -H 'Content-Type: application/json'   -d '{"text":"Add finish my CUDA kernel to my tasks."}'
 ```
 
-List tasks:
-
+Then:
 ```bash
 curl http://127.0.0.1:8000/tasks
 ```
 
-## Scheduling
-
-The default schedule is configured in `app/config.py`.
-
-The morning brief defaults to 08:00 in `TIMEZONE`.
-
-## Adding a Needle agent
-
-Create a module under `app/agents/`.
-
-Each agent should:
-1. expose a small tool surface
-2. instantiate `needle.Needle(...)`
-3. keep tools narrow
-4. return structured results
-5. avoid side effects unless explicitly permitted
-
-Example:
-
-```python
-import needle
-
-@needle.tool
-def get_something(query: str):
-    """Read something from a safe source."""
-    return {"query": query}
-
-agent = needle.Needle(tools=[get_something])
+## Telegram
+After both Telegram variables are set:
+```bash
+docker compose up -d --build
+docker compose logs -f telegram
 ```
+Message the bot from the configured chat. `/tasks` lists tasks; `/done 1` completes task 1; normal natural language goes to Task Needle.
 
-Needle's documented API supports `Needle(tools=...)`, `agent.run(...)`, tool decorators, confidence gating and tool retrieval. See the official API docs.
+## V1 safety
+Telegram token is never passed to Needle. There is no shell tool, arbitrary filesystem tool, GitHub write tool, or email-send tool.
 
-## Design principle
-
-Do not make every task an LLM task.
-
-Use:
-
-deterministic trigger -> deterministic collection -> Needle reasoning/tool selection -> structured result
-
-This keeps the system cheap, debuggable and safe.
+V2 should add durable scheduling/reminder creation through validated tools, GitHub, Calendar, notification preferences, and a real event bus.
