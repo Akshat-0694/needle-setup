@@ -1,22 +1,37 @@
 import os
-import shutil
 import platform
+import shutil
 import needle
 
+
 @needle.tool
-def system_info():
-    """Read basic read-only information about the EC2 host."""
-    total, used, free = shutil.disk_usage("/")
+def get_system_status():
+    """Get read-only information about the EC2 machine."""
+    disk = shutil.disk_usage("/")
+
     return {
+        "hostname": platform.node(),
         "platform": platform.platform(),
         "cpu_count": os.cpu_count(),
-        "disk_free_gb": round(free / 1024**3, 2),
-        "disk_total_gb": round(total / 1024**3, 2),
+        "disk_total_gb": round(disk.total / 1024**3, 2),
+        "disk_used_gb": round(disk.used / 1024**3, 2),
+        "disk_free_gb": round(disk.free / 1024**3, 2),
     }
+
 
 def run(prompt: str):
     agent = needle.Needle(
-        tools=[system_info],
-        system="You are a read-only system assistant. Never execute commands or modify the host.",
+        tools=[get_system_status],
+        system=(
+            "You are the System Needle in a personal assistant system. "
+            "You are strictly read-only. "
+            "Use tools when necessary. "
+            "Never invent system information."
+        ),
     )
-    return agent.run(prompt, max_steps=4, max_new_tokens=192)
+
+    return agent.run(
+        prompt,
+        max_steps=4,
+        max_new_tokens=256,
+    )
