@@ -5,10 +5,23 @@ from app.config import settings
 from app import state
 
 @needle.tool
-def create_task(title: str, notes: str="", due_at: str=""):
-    """Create a personal task. due_at is ISO-8601 with timezone, or empty."""
-    tid=state.create_task(title,notes,due_at or None); task=state.get_task(tid)
-    state.add_event("task.created","task-needle",task); return task
+def create_task(
+    title: str,
+    notes: str = "",
+    due_at: str = "",
+):
+    """Create a new personal task.
+
+    Args:
+        title: The task to add. Extract the user's requested task from natural language.
+        notes: Optional additional details about the task.
+        due_at: Optional ISO-8601 date and time for when the task is due. Leave empty if no date/time was given.
+    """
+    task_id = state.create_task(title=title)
+    task = state.get_task(task_id)
+
+    state.add_event("task.created", "task-needle", task)
+    return task
 
 @needle.tool
 def list_open_tasks():
