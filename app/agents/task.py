@@ -2,34 +2,16 @@ import needle
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.config import settings
-from app import state
-
+from app.mcp.client import call
 @needle.tool
-def create_task(title: str, notes: str="", due_at: str=""):
-    """Create a personal task. due_at is ISO-8601 with timezone, or empty."""
-    tid=state.create_task(title,notes,due_at or None); task=state.get_task(tid)
-    state.add_event("task.created","task-needle",task); return task
-
+def create_task(title:str): """Create a task.""";return call('tasks_create',title=title)
 @needle.tool
-def list_open_tasks():
-    """List all open personal tasks."""
-    return state.list_tasks("open")
-
+def list_open_tasks(): """List open tasks.""";return call('tasks_list',status='open')
 @needle.tool
-def complete_task(task_id: int):
-    """Mark a task completed."""
-    task=state.complete_task(task_id)
-    if task: state.add_event("task.completed","task-needle",task)
-    return task or {"error":"Task not found"}
-
+def complete_task(task_id:int): """Complete a task.""";return call('tasks_complete',task_id=task_id)
 @needle.tool
-def get_current_time():
-    """Return current time in configured user timezone."""
-    return datetime.now(ZoneInfo(settings.timezone)).isoformat()
-
+def get_current_time(): """Get current configured time.""";return datetime.now(ZoneInfo(settings.timezone)).isoformat()
+@needle.tool
+def schedule_reminder(task_id:int,remind_at:str): """Schedule a reminder.""";return call('reminders_schedule',task_id=task_id,remind_at=remind_at)
 def run(prompt):
-    agent=needle.Needle(tools=[create_task,list_open_tasks,complete_task,get_current_time],
-        system=("You are Task Needle. Manage personal tasks using tools. "
-                "Never invent task state. Create/complete tasks only through tools. "
-                "If a date/time is ambiguous, ask for clarification."))
-    return agent.run(prompt,max_steps=6,max_new_tokens=256)
+ a=needle.Needle(tools=[create_task,list_open_tasks,complete_task,get_current_time,schedule_reminder],system='You are Task Needle. Manage tasks and reminders using tools. Never invent IDs. Resolve relative times using get_current_time.');return a.complete(prompt)

@@ -1,53 +1,39 @@
-# Needle Daily V1
-Personal task automation using Cactus Needle 2.0.10.
+# Needle Daily V2
 
-## Services
-- app: FastAPI control API + Task Needle
-- scheduler: reminder checker
-- telegram: Telegram polling transport
-- SQLite: persistent tasks/events
+Personal multi-agent runtime around Cactus Needle 2 and MCP.
 
-## Amazon Linux 2023
-```bash
-sudo dnf install -y docker git curl
-sudo systemctl enable --now docker
-sudo usermod -aG docker ec2-user
-```
-Log out and back in.
+## Agents
+- Task Needle: tasks/reminders
+- Blog Needle: industry blog discovery + curation
+- Opportunity Needle: network-intelligence over imported/approved LinkedIn profile data
+- Research Needle: public web research via Jina Reader
+- GitHub Needle: read-only `gh` capabilities
+- Morning Needle: cross-domain briefing
+- Telegram transport + scheduler
 
-## Configure
-```bash
-cp .env.example .env
-nano .env
+## Architecture
+```text
+Telegram -> Router -> specialized Needle -> MCP capability server -> state/APIs
+                                      \-> Notification / scheduler -> Telegram
 ```
 
-Set `TELEGRAM_BOT_TOKEN` from @BotFather. Set `TELEGRAM_CHAT_ID` to your numeric chat ID. Never commit `.env`.
+MCP is the capability boundary; Needle remains the reasoning/tool-selection layer. The official Python SDK supports MCP servers/clients and Streamable HTTP; this repo uses that pattern.
+
+## Important LinkedIn constraint
+Opportunity Needle does NOT scrape LinkedIn, automate login, send connection requests, or message people. Import profile records from an approved API/export/your own dataset, then enrich/rank them.
 
 ## Start
 ```bash
-./scripts/start.sh
+cp .env.example .env
+chmod +x scripts/*.sh
+docker compose up -d --build
+docker compose ps
 curl http://127.0.0.1:8000/health
 ```
 
-## Test Task Needle
-```bash
-curl -X POST http://127.0.0.1:8000/message   -H 'Content-Type: application/json'   -d '{"text":"Add finish my CUDA kernel to my tasks."}'
-```
+For Telegram set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 
-Then:
-```bash
-curl http://127.0.0.1:8000/tasks
-```
+## Commands
+`/tasks`, `/done <id>`, `/blogs`, `/people`, `/morning`
 
-## Telegram
-After both Telegram variables are set:
-```bash
-docker compose up -d --build
-docker compose logs -f telegram
-```
-Message the bot from the configured chat. `/tasks` lists tasks; `/done 1` completes task 1; normal natural language goes to Task Needle.
-
-## V1 safety
-Telegram token is never passed to Needle. There is no shell tool, arbitrary filesystem tool, GitHub write tool, or email-send tool.
-
-V2 should add durable scheduling/reminder creation through validated tools, GitHub, Calendar, notification preferences, and a real event bus.
+Natural language is routed to a specialized Needle.

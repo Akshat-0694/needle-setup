@@ -1,0 +1,5 @@
+[
+ {"id":"openai","name":"OpenAI","feed":"https://openai.com/news/rss.xml","topics":["AI","LLM","agents","systems"]},
+ {"id":"nvidia","name":"NVIDIA Developer Blog","feed":"https://developer.nvidia.com/blog/feed/","topics":["CUDA","GPU","inference","systems"]},
+ {"id":"huggingface","name":"Hugging Face Blog","feed":"https://huggingface.co/blog/feed.xml","topics":["ML","LLM","open source","agents"]}
+]

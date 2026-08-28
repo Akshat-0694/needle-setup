@@ -1,14 +1,10 @@
+[build-system]
+requires=["setuptools>=68"]
+build-backend="setuptools.build_meta"
 [project]
-name = "needle-daily"
-version = "0.1.0"
-description = "Always-on personal task automation using Cactus Needle 2."
-requires-python = ">=3.10"
-dependencies = [
-  "cactus-needle==2.0.10",
-  "fastapi>=0.116,<1",
-  "uvicorn[standard]>=0.35,<1",
-  "pydantic>=2.11,<3",
-  "python-dotenv>=1.1,<2",
-  "httpx>=0.28,<1",
-  "apscheduler>=3.11,<4",
-]
+name="needle-daily-v2"
+version="0.2.0"
+requires-python=">=3.12"
+dependencies=["cactus-needle==2.0.10","fastapi>=0.115,<1","uvicorn[standard]>=0.30,<1","pydantic>=2.7,<3","httpx>=0.27,<1","feedparser>=6,<7","mcp>=2,<3","python-dotenv>=1,<2"]
+[tool.setuptools]
+packages=["app","app.agents","app.mcp","app.transports"]
