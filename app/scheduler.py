@@ -11,6 +11,145 @@ from app.agents.blog import scan as blog_scan
 from app.agents.github import scan as github_scan
 
 
+def build_arxiv_digest(papers):
+    """
+    Build a deterministic Telegram digest for curated arXiv papers.
+
+    This function only formats already-curated database records.
+    It does not perform discovery or classification.
+    """
+
+    if not papers:
+        return "No new interesting arXiv papers."
+
+    lines = [
+        "📚 Research — Interesting arXiv papers",
+        "",
+    ]
+
+    for i, paper in enumerate(papers, 1):
+        title = paper.get(
+            "title",
+            "Untitled paper",
+        )
+
+        score = paper.get(
+            "score",
+            0,
+        )
+
+        area = (
+            paper.get("technical_area")
+            or "Unknown"
+        )
+
+        reason = (
+            paper.get("reason")
+            or "No reason available."
+        )
+
+        url = paper.get(
+            "url",
+            "",
+        )
+
+        arxiv_id = paper.get(
+            "arxiv_id",
+            "",
+        )
+
+        lines.append(
+            f"{i}. {title}"
+        )
+
+        lines.append(
+            f"   Score: {float(score):.3f}"
+        )
+
+        lines.append(
+            f"   Area: {area}"
+        )
+
+        lines.append(
+            f"   Why: {reason}"
+        )
+
+        if arxiv_id:
+            lines.append(
+                f"   arXiv: {arxiv_id}"
+            )
+
+        if url:
+            lines.append(
+                f"   {url}"
+            )
+
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def notify_arxiv_papers(limit=10):
+    """
+    Deliver curated but unnotified arXiv papers to Telegram.
+
+    Database state is authoritative:
+
+        interesting=1 AND notified=0
+            -> send
+            -> mark notified
+
+    A paper is marked notified only after Telegram succeeds.
+    """
+
+    papers = state.unnotified_research_papers(
+        limit
+    )
+
+    if not papers:
+        return {
+            "found": 0,
+            "sent": 0,
+            "failed": 0,
+            "papers": [],
+        }
+
+    message = build_arxiv_digest(
+        papers
+    )
+
+    try:
+        send_message(message)
+
+    except Exception as exc:
+        return {
+            "found": len(papers),
+            "sent": 0,
+            "failed": len(papers),
+            "papers": papers,
+            "error": (
+                f"{type(exc).__name__}: {exc}"
+            ),
+        }
+
+    arxiv_ids = [
+        p["arxiv_id"]
+        for p in papers
+        if p.get("arxiv_id")
+    ]
+
+    state.mark_research_papers_notified(
+        arxiv_ids
+    )
+
+    return {
+        "found": len(papers),
+        "sent": len(arxiv_ids),
+        "failed": 0,
+        "papers": papers,
+    }
+
+
 def build_blog_digest(articles):
     lines = [
         "🔥 High-signal industry reads",
