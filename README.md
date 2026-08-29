@@ -17,6 +17,8 @@ Personal multi-agent runtime around Cactus Needle 2 and MCP. Runs on a server (E
 | **Opportunity** | Watches a list of opportunities you add and notifies you when one becomes available | `/add_opportunity <url> <title>`, `/opportunities`, scheduled |
 | **Blog / Industry news** | Curates high-signal industry reads from your RSS feeds | `/blogs` + scheduled |
 | **Research / arXiv** | Deterministically discovers + curates arXiv papers and sends digests | Scheduled |
+| **Gmail Spam** | Scans your inbox (IMAP, app password), moves clearly-spam mail to Gmail's Spam folder and pings you with what it did | `/spam`, `/spam scan`, scheduled |
+| **Server Health** | System load/memory/disk/uptime, service status (MCP/Telegram/Notion/Gmail), DB stats and last scheduler runs | `/health` or `/status` |
 
 All scheduled discoveries notify you on Telegram. Blog/GitHub/Research/HF/Kaggle items are also persisted into Notion as child pages (one page per item, under a configurable parent page per needle).
 
@@ -55,11 +57,26 @@ curl http://127.0.0.1:8000/health
 
 ## Telegram commands
 
-`/tasks`, `/done <id>`, `/blogs`, `/people`, `/opportunities`,
-`/add_opportunity <url> <title>`, `/remove_opportunity <id>`, `/morning`.
+`/health` (or `/status`), `/tasks`, `/done <id>`, `/blogs`, `/people`,
+`/opportunities`, `/add_opportunity <url> <title>`,
+`/remove_opportunity <id>`, `/spam`, `/spam scan`, `/morning`.
 
 Natural language is routed to the matching Needle (tasks, github, blog,
-linkedin, opportunity, research).
+linkedin, opportunity, research, spam, health).
+
+## Gmail spam needle
+
+Requires `GMAIL_EMAIL` and `GMAIL_APP_PASSWORD` (Google Account → Security →
+2-Step Verification → App passwords, with IMAP enabled in Gmail settings).
+
+- Every `GMAIL_SCAN_HOURS` (default 3) the scheduler scans recent inbox mail.
+- It only auto-moves mail that is *clearly* bulk/automated spam (multiple
+  strong signals: `List-Unsubscribe` + a marketing sender, or high-precision
+  spam/phishing phrases). Newsletters alone are not moved.
+- Nothing is deleted — moving to Gmail's Spam folder is reversible.
+- `GMAIL_SPAM_WHITELIST` (comma-separated emails/domains) is always respected.
+- You get a Telegram digest of what was moved, plus a separate "suspicious"
+  list that is left in your inbox for you to judge.
 
 ## Deploying to EC2
 
@@ -104,6 +121,65 @@ in the security group.
 - **LinkedIn**: never scrapes LinkedIn or automates outreach — it ranks
   profiles you import/approve.
 - **Scheduler cadence**: blog + GitHub every 15 min; arXiv + Hugging Face +
-  Kaggle + opportunity checks every 6 hours; morning brief once a day at
-  `MORNING_TIME`.
+  Kaggle + opportunity checks every 6 hours; Gmail spam scan every
+  `GMAIL_SCAN_HOURS`; morning brief once a day at `MORNING_TIME`.
 - Setting `ALLOW_SIDE_EFFECTS=true` enables side-effecting tools.
+
+## One-shot EC2 setup (t3.micro)
+
+Everything below you run **once, in a terminal after `ssh`ing into the
+instance**. `docker compose up -d` starts all services in the background and
+they keep running after you close the terminal; `restart: unless-stopped`
+even brings them back after a reboot. Copy-paste block by block:
+
+```bash
+# 1) SSH in (from your laptop)
+ssh -i ~/.ssh/your-key.pem ubuntu@<your-ec2-public-ip>
+
+# 2) Install Docker + the compose plugin
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2
+sudo usermod -aG docker $USER
+newgrp docker            # apply group membership in this session
+
+# 3) t3.micro has only 1 GB RAM — add a little swap so the needle
+#    engine + containers don't get OOM-killed
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# 4) Get the code
+git clone <your-repo-url> needle-setup
+cd needle-setup
+
+# 5) Configure
+cp .env.example .env
+nano .env                 # fill in TELEGRAM_*, NOTION_*, GITHUB_TOKEN, KAGGLE_*, GMAIL_*, …
+
+# 6) Build and start everything in the background
+docker compose up -d --build
+
+# 7) Check it's healthy, then you can close the terminal — it keeps running
+curl -s http://127.0.0.1:8000/health && echo
+docker compose ps
+docker compose logs -f scheduler telegram     # press Ctrl-C to stop watching logs
+```
+
+That's it. After step 7 you can disconnect — the API, scheduler, Telegram
+bot and all needles run in the background on the server.
+
+### Useful admin commands
+
+```bash
+docker compose ps                  # see running services
+docker compose logs -f scheduler   # watch the scheduler
+docker compose logs -f telegram    # watch the Telegram bot
+docker compose restart scheduler   # restart one service
+docker compose down                # stop everything
+docker compose up -d --build       # rebuild + restart after pulling new code
+```
+
+To check on it from Telegram later, send `/health` to your bot — it reports
+load, memory, disk, service status, DB stats and the last run of every job.

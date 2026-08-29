@@ -927,3 +927,72 @@ def get_kv(key, default=None):
     ).fetchone()
 
     return row["value"] if row else default
+
+
+# --- Gmail spam handling audit ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS spam_events(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT UNIQUE,
+    sender TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    action TEXT NOT NULL,
+    score REAL DEFAULT 0,
+    signals TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def record_spam_event(event):
+    db.execute(
+        """
+        INSERT OR IGNORE INTO spam_events(
+            message_id, sender, subject, action, score, signals
+        )
+        VALUES(?,?,?,?,?,?)
+        """,
+        (
+            event.get("message_id"),
+            event.get("sender", ""),
+            event.get("subject", ""),
+            event.get("action", "moved_to_spam"),
+            event.get("score", 0.0),
+            ", ".join(event.get("signals", [])),
+        ),
+    )
+
+    db.commit()
+
+
+def spam_events_since(limit=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM spam_events
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def spam_events_today():
+    rows = db.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM spam_events
+        WHERE date(created_at) = date('now')
+        """
+    ).fetchall()
+
+    return (rows[0]["n"] if rows else 0)
+
+
+def last_spam_scan():
+    return get_kv("last_spam_scan", None)

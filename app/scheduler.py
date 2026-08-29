@@ -13,6 +13,58 @@ from app.agents import research
 from app.agents import kaggle as kaggle_agent
 from app.agents import opportunity as opportunity_agent
 from app.agents import morning as morning_agent
+from app.agents import spam as spam_agent
+
+
+def _mark_job(name):
+    state.set_kv(
+        "last_" + name,
+        datetime.now(
+            ZoneInfo(settings.timezone)
+        ).isoformat(),
+    )
+
+
+def check_spam():
+    """Scan the inbox and move clearly-spam messages to Spam."""
+    if (
+        not settings.gmail_email
+        or not settings.gmail_app_password
+    ):
+        return
+
+    from app.integrations import gmail
+
+    try:
+        result = gmail.scan_inbox(
+            since_hours=settings.gmail_scan_hours,
+        )
+
+        _mark_job("spam_scan")
+
+        moved = result.get("moved", [])
+        suspicious = result.get("suspicious", [])
+
+        print(
+            "[scheduler] spam scan: "
+            f"scanned={result.get('scanned', 0)} "
+            f"moved={len(moved)} "
+            f"suspicious={len(suspicious)} "
+            f"spam_folder={result.get('spam_folder_count', 0)}",
+            flush=True,
+        )
+
+        if moved or suspicious:
+            send_message(
+                spam_agent.build_digest(result)
+            )
+
+    except Exception as exc:
+        print(
+            "[scheduler] spam scan failed: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
 
 def build_arxiv_digest(papers):
@@ -544,6 +596,8 @@ def check_reminders():
 
 
 def check_opportunities():
+    _mark_job("opportunity_check")
+
     result = opportunity_agent.check_all()
 
     newly_available = result.get(
@@ -622,6 +676,7 @@ def maybe_send_morning_brief():
         )
 
         state.set_kv("morning_sent_date", today)
+        _mark_job("morning")
 
         print(
             "[scheduler] sent morning brief",
@@ -646,6 +701,7 @@ def refresh_sources():
 
     try:
         blog_result = blog_scan(20)
+        _mark_job("blog_scan")
 
         print(
             "[scheduler] blog scan: "
@@ -665,6 +721,7 @@ def refresh_sources():
 
     try:
         github_result = github_scan(20)
+        _mark_job("github_scan")
 
         print(
             "[scheduler] GitHub scan: "
@@ -690,6 +747,7 @@ def refresh_research():
 
     try:
         arxiv_result = research.run_arxiv_research(limit=10)
+        _mark_job("research_scan")
 
         print(
             "[scheduler] arXiv scan: "
@@ -726,6 +784,7 @@ def refresh_research():
 
     try:
         kaggle_result = kaggle_agent.scan(20)
+        _mark_job("kaggle_scan")
 
         print(
             "[scheduler] Kaggle scan: "
@@ -753,6 +812,8 @@ def main():
     last_refresh = 0
     last_research = 0
     last_opportunity = 0
+    last_spam = 0
+    spam_interval = max(900, settings.gmail_scan_hours * 3600)
 
     while True:
         now = time.time()
@@ -785,6 +846,11 @@ def main():
                     flush=True,
                 )
             last_opportunity = now
+
+        # Gmail spam scan (default every 3 hours).
+        if now - last_spam >= spam_interval:
+            check_spam()
+            last_spam = now
 
         maybe_send_morning_brief()
 

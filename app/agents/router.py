@@ -6,11 +6,22 @@ from app.agents import (
     research,
     github,
     morning,
+    spam,
+    health,
 )
 
 
 def route(t):
     l = t.lower().strip()
+
+    if l in ("/health", "/status"):
+        return health.run()
+
+    if l == "/spam":
+        return spam.run("Show my spam status")
+
+    if l.startswith("/spam "):
+        return spam.run(t)
 
     if l == "/tasks":
         return task.list_open_tasks()
@@ -53,5 +64,11 @@ def route(t):
 
     if any(x in l for x in ["research", "paper", "arxiv", "look up"]):
         return research.run(t)
+
+    if any(x in l for x in ["spam", "gmail", "unsubscribe", "phishing"]):
+        return spam.run(t)
+
+    if any(x in l for x in ["server health", "health", "server status", "how is the server"]):
+        return health.run()
 
     return task.run(t)

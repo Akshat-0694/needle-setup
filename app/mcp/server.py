@@ -302,6 +302,47 @@ def opportunity_remove(
 
 
 @mcp.tool()
+def spam_scan(
+    since_hours: int = 6,
+    limit: int = 50,
+) -> dict:
+    """
+    Scan recent inbox mail and move clearly-spam messages to Spam.
+
+    Uses GMAIL_EMAIL / GMAIL_APP_PASSWORD. Never deletes mail; moving to
+    the Spam folder is reversible.
+    """
+
+    from app.integrations import gmail
+
+    result = gmail.scan_inbox(
+        since_hours=since_hours,
+        limit=limit,
+    )
+
+    state.set_kv("last_spam_scan", datetime.now().isoformat())
+
+    return result
+
+
+@mcp.tool()
+def spam_status(
+    limit: int = 10,
+) -> dict:
+    """Recent Gmail spam-handling activity."""
+
+    return {
+        "configured": bool(
+            settings.gmail_email
+            and settings.gmail_app_password
+        ),
+        "moved_today": state.spam_events_today(),
+        "last_scan": state.last_spam_scan(),
+        "recent": state.spam_events_since(limit),
+    }
+
+
+@mcp.tool()
 def kaggle_discover(
     limit: int = 20,
 ) -> list[dict]:

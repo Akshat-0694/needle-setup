@@ -51,6 +51,14 @@ class Settings:
     # Morning briefing time, local timezone, 24h "HH:MM"
     morning_time: str = os.getenv("MORNING_TIME", "08:30")
 
+    # Gmail spam needle (IMAP with an app password)
+    gmail_email: str = os.getenv("GMAIL_EMAIL", "")
+    gmail_app_password: str = os.getenv("GMAIL_APP_PASSWORD", "")
+    # Comma-separated emails or domains never touched by the spam needle
+    gmail_spam_whitelist: str = os.getenv("GMAIL_SPAM_WHITELIST", "")
+    # How often the scheduler scans for spam (hours)
+    gmail_scan_hours: int = int(os.getenv("GMAIL_SCAN_HOURS", "3"))
+
     # Safety switch for side-effecting tools
     allow_side_effects: bool = os.getenv("ALLOW_SIDE_EFFECTS", "false").lower() == "true"
 
