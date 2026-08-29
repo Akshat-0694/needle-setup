@@ -1,6 +1,7 @@
 import re
 
 import needle
+from pydantic import BaseModel, Field
 
 from app.mcp.client import call
 from app.integrations import needle_notion
@@ -17,6 +18,21 @@ def fetch_url(url: str) -> dict:
     return call(
         "research_fetch_url",
         url=url,
+    )
+
+
+@needle.tool
+def arxiv_discover(
+    query: str = "cat:cs.LG OR cat:cs.AI OR cat:cs.CL OR cat:cs.DC",
+    limit: int = 20,
+    days: int = 7,
+) -> list[dict]:
+    """Discover recent arXiv papers."""
+    return call(
+        "arxiv_discover",
+        query=query,
+        limit=limit,
+        days=days,
     )
 
 
@@ -109,393 +125,922 @@ def _extract_paper_urls(text):
     ]
 
 
+
 # ============================================================
-# Research Needle
+# arXiv paper curation
 # ============================================================
 
-def _make_research_needle():
-    return needle.Needle(
-        tools=[
-            fetch_url,
-            interesting_blogs,
-            interesting_github,
-        ],
-        system="""
-You are Research Needle.
+class PaperDecision(BaseModel):
+    """
+    Deliberately simple schema.
 
-You are the deep technical research layer of Needle Daily.
+    Needle 2.0.10 reliably handles basic Pydantic schemas,
+    while constrained JSON schemas were observed to return None.
+    Numerical validation therefore happens in Python.
+    """
 
-Your job is to investigate technical developments using
-primary sources and technical evidence.
+    interesting: bool
+    reason: str
+    signals: list[str]
 
-You may use:
 
-- fetch_url
-- interesting_blogs
-- interesting_github
+_TECHNICAL_SIGNALS = {
+    "llm": (
+        "large language model",
+        "language model",
+        "llm",
+        "foundation model",
+    ),
+    "inference": (
+        "inference",
+        "serving",
+        "generation",
+        "decoding",
+    ),
+    "cuda": (
+        "cuda",
+        "gpu",
+        "kernel",
+        "triton",
+        "flashattention",
+        "flash attention",
+    ),
+    "optimization": (
+        "optimization",
+        "optimisation",
+        "efficient",
+        "efficiency",
+        "latency",
+        "throughput",
+        "memory efficiency",
+    ),
+    "systems": (
+        "systems",
+        "runtime",
+        "compiler",
+        "distributed",
+        "parallel",
+        "scheduling",
+    ),
+    "architecture": (
+        "architecture",
+        "attention",
+        "transformer",
+        "mixture of experts",
+        "moe",
+        "state space model",
+        "ssm",
+    ),
+    "agents": (
+        "agent",
+        "agents",
+        "tool use",
+        "reasoning",
+        "planning",
+    ),
+    "training": (
+        "training",
+        "pretraining",
+        "fine-tuning",
+        "finetuning",
+        "reinforcement learning",
+        "post-training",
+    ),
+}
 
-RESEARCH RULES
 
-1. Never invent technical facts.
-2. Never invent papers, benchmarks, repositories,
-   datasets, numerical results, or citations.
-3. Distinguish explicit source evidence from inference.
-4. Prefer primary technical sources.
-5. When a source references a paper or repository,
-   follow the link with fetch_url when possible.
-6. Do not treat a marketing claim as experimental evidence.
-7. Identify missing evidence explicitly.
-8. If a claim cannot be verified from available sources,
-   say so.
-9. Prefer technical mechanisms over promotional language.
-10. Explain why the development matters to someone working
-    on AI systems, inference, CUDA, GPU systems, agents,
-    distributed systems, compilers, or ML infrastructure.
+def _paper_text(paper):
+    title = str(
+        paper.get("title")
+        or ""
+    )
 
-RESEARCH PROCESS
+    abstract = str(
+        paper.get("abstract")
+        or paper.get("description")
+        or ""
+    )
 
-For a specific URL:
-
-1. Fetch the URL.
-2. Inspect the content.
-3. Identify important paper/research links.
-4. Identify implementation/GitHub links.
-5. Fetch the most relevant primary sources when useful.
-6. Synthesize the evidence.
-
-For a broad research request:
-
-1. Search curated blog sources and GitHub sources.
-2. Select high-signal candidates.
-3. Fetch the most relevant sources.
-4. Investigate them.
-5. Produce a ranked technical synthesis.
-
-OUTPUT FORMAT
-
-TITLE:
-...
-
-ONE-LINE TAKEAWAY:
-...
-
-PROBLEM:
-...
-
-TECHNICAL CONTRIBUTION:
-...
-
-HOW IT WORKS:
-...
-
-EVIDENCE:
-- ...
-
-PAPER / RESEARCH CONNECTIONS:
-- ...
-
-IMPLEMENTATION / GITHUB CONNECTIONS:
-- ...
-
-LIMITATIONS:
-- ...
-
-WHY IT MATTERS:
-...
-
-WHAT TO INVESTIGATE NEXT:
-- ...
-
-CONFIDENCE:
-HIGH / MEDIUM / LOW
-
-SOURCE EVIDENCE:
-- ...
-
-INFERENCE:
-- ...
-
-UNKNOWN / NEEDS VERIFICATION:
-- ...
-"""
+    return (
+        f"Title: {title}\n\n"
+        f"Abstract: {abstract}"
     )
 
 
-# ============================================================
-# Single-source investigation
-# ============================================================
+def _technical_signals(paper):
+    text = _paper_text(paper).lower()
 
-def investigate(url: str):
-    if not url:
+    found = []
+
+    for category, terms in _TECHNICAL_SIGNALS.items():
+        if any(term in text for term in terms):
+            found.append(category)
+
+    return found
+
+
+def _deterministic_paper_score(paper):
+    """
+    Numerical score is owned by Python.
+
+    Needle only provides semantic judgment.
+    """
+
+    signals = _technical_signals(paper)
+
+    score = 0.0
+
+    # Broad technical relevance.
+    score += min(
+        0.40,
+        0.08 * len(signals),
+    )
+
+    # Stronger systems/infrastructure signals.
+    strong = {
+        "inference",
+        "cuda",
+        "optimization",
+        "systems",
+    }
+
+    score += min(
+        0.25,
+        0.08 * len(
+            set(signals) & strong
+        ),
+    )
+
+    # Research architecture/training signals.
+    if "architecture" in signals:
+        score += 0.10
+
+    if "training" in signals:
+        score += 0.05
+
+    if "agents" in signals:
+        score += 0.05
+
+    # Strong title/abstract technical indicators.
+    text = _paper_text(paper).lower()
+
+    high_signal_terms = (
+        "flashattention",
+        "pagedattention",
+        "mixture of experts",
+        "moe",
+        "cuda kernel",
+        "gpu kernel",
+        "inference optimization",
+        "distributed training",
+        "distributed inference",
+        "compiler",
+        "runtime",
+    )
+
+    if any(
+        term in text
+        for term in high_signal_terms
+    ):
+        score += 0.15
+
+    return max(
+        0.0,
+        min(1.0, score),
+    )
+
+
+def classify_paper(paper):
+    """
+    Classify one arXiv candidate with Needle.
+
+    This function intentionally has NO network tools.
+    The model sees only the candidate metadata.
+    """
+
+    signals = _technical_signals(paper)
+    deterministic_score = _deterministic_paper_score(
+        paper
+    )
+
+    # Cheap deterministic rejection.
+    #
+    # A paper with no relevant technical signal does not
+    # need an expensive semantic classification.
+    if not signals:
         return {
-            "ok": False,
-            "error": "URL is required.",
+            "interesting": False,
+            "score": deterministic_score,
+            "reason": "No configured AI-systems technical signals found.",
+            "signals": [],
+            "model_used": False,
         }
 
-    url = _clean_url(url)
-
-    # --------------------------------------------------------
-    # STEP 1 — deterministic primary-source fetch
-    # --------------------------------------------------------
-
-    fetched = fetch_url(url)
-
-    if not isinstance(fetched, dict):
-        return {
-            "ok": False,
-            "error": "Unexpected fetch result.",
-            "url": url,
-        }
-
-    content = fetched.get("content", "")
-
-    if not content:
-        return {
-            "ok": False,
-            "error": "No readable content returned.",
-            "url": url,
-        }
-
-    # --------------------------------------------------------
-    # STEP 2 — let Needle analyze the already-fetched source
-    # --------------------------------------------------------
-
-    # IMPORTANT:
-    # The synthesis Needle receives already-fetched content and
-    # must not have network tools available. This prevents it
-    # from hallucinating or recursively corrupting URLs.
     agent = needle.Needle(
         tools=[],
-        system=(
-            "You are a technical research analyst. "
-            "Analyze only the source material supplied in the prompt. "
-            "Do not fetch URLs. Do not invent URLs. "
-            "Do not claim evidence that is not present in the source."
-        ),
+        system="""
+You are Research Needle, an AI systems research curator.
+
+Your job is to decide whether an arXiv paper is genuinely
+interesting to a technical researcher working on:
+
+- LLM systems
+- inference
+- GPU/CUDA
+- kernels
+- optimization
+- ML systems
+- distributed systems
+- compilers
+- runtimes
+- model architecture
+- training infrastructure
+- agents
+
+You receive ONLY the paper title, abstract, and deterministic
+technical signals.
+
+Do not invent facts.
+Do not invent benchmarks.
+Do not invent repositories.
+Do not invent papers.
+Do not invent numerical results.
+
+interesting=True means the supplied abstract contains a
+substantial technical contribution or meaningful technical
+development relevant to the areas above.
+
+interesting=False means the paper is merely adjacent, generic,
+or insufficiently relevant.
+
+The reason must explain the decision using evidence present
+in the supplied title or abstract.
+
+signals should contain only concrete technical concepts
+supported by the supplied text.
+""",
     )
 
     prompt = f"""
-Analyze the following technical source.
-
-The source has ALREADY been fetched successfully.
-
-You MUST NOT call fetch_url for the original URL.
-
-Original source URL:
-{url}
-
-Source content:
---------------------
-{content}
---------------------
-
-Analyze only the supplied source unless additional
-verification is genuinely necessary.
-
-If you discover a clearly relevant paper, implementation,
-GitHub repository, benchmark, or technical source that
-needs verification, you may use fetch_url on that specific
-URL.
-
-Do not invent URLs.
-
-Produce the complete research report using this format:
+Classify this arXiv paper.
 
 TITLE:
-...
+{paper.get("title", "")}
 
-ONE-LINE TAKEAWAY:
-...
+ABSTRACT:
+{paper.get("abstract", paper.get("description", ""))}
 
-PROBLEM:
-...
+DETERMINISTIC TECHNICAL SIGNALS:
+{signals}
 
-TECHNICAL CONTRIBUTION:
-...
+DETERMINISTIC BASE SCORE:
+{deterministic_score:.3f}
 
-HOW IT WORKS:
-...
-
-EVIDENCE:
-- ...
-
-PAPER / RESEARCH CONNECTIONS:
-- ...
-
-IMPLEMENTATION / GITHUB CONNECTIONS:
-- ...
-
-LIMITATIONS:
-- ...
-
-WHY IT MATTERS:
-...
-
-WHAT TO INVESTIGATE NEXT:
-- ...
-
-CONFIDENCE:
-HIGH / MEDIUM / LOW
-
-SOURCE EVIDENCE:
-- ...
-
-INFERENCE:
-- ...
-
-UNKNOWN / NEEDS VERIFICATION:
-- ...
+Return the structured decision.
 """
 
-    result = agent.complete(
-        prompt,
-        max_new_tokens=768,
+    try:
+        decision = agent.extract(
+            prompt,
+            PaperDecision,
+            max_new_tokens=256,
+        )
+
+    except Exception as exc:
+        return {
+            "interesting": False,
+            "score": deterministic_score,
+            "reason": (
+                "Needle classification failed: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "signals": signals,
+            "model_used": False,
+            "classification_error": True,
+        }
+
+    if decision is None:
+        return {
+            "interesting": False,
+            "score": deterministic_score,
+            "reason": "Needle returned no classification.",
+            "signals": signals,
+            "model_used": False,
+            "classification_error": True,
+        }
+
+    # --------------------------------------------------------
+    # Normalize model output.
+    # --------------------------------------------------------
+
+    interesting = bool(
+        decision.interesting
     )
 
-    return {
-        "ok": True,
-        "url": url,
-        "result": result,
-        "paper_urls": _extract_paper_urls(content),
-        "urls": _extract_urls(content),
-    }
+    reason = str(
+        decision.reason or ""
+    ).strip()
 
+    model_signals = []
 
-# ============================================================
-# Blog research
-# ============================================================
+    for signal in (
+        decision.signals or []
+    ):
+        signal = str(signal).strip()
 
-def research_blog(article):
-    url = article.get("url")
+        if signal and signal not in model_signals:
+            model_signals.append(signal)
 
-    if not url:
-        return {
-            "ok": False,
-            "error": "Article has no URL.",
-        }
+    # Never allow the model to create the numerical score.
+    final_score = deterministic_score
 
-    result = investigate(url)
+    # Semantic confirmation gives a controlled bonus.
+    if interesting:
+        final_score += 0.20
+    else:
+        final_score -= 0.15
 
-    if not result.get("ok"):
-        return result
-
-    return {
-        **result,
-        "kind": "blog",
-        "title": article.get("title"),
-        "source": article.get("source"),
-        "research": result.get("result"),
-    }
-
-
-def research_interesting_blogs(limit=5):
-    articles = state.interesting_articles(limit)
-
-    results = []
-
-    for article in articles:
-        try:
-            result = research_blog(article)
-
-            if result.get("ok"):
-                results.append(result)
-
-        except Exception as exc:
-            results.append({
-                "ok": False,
-                "title": article.get("title"),
-                "url": article.get("url"),
-                "error": (
-                    f"{type(exc).__name__}: {exc}"
-                ),
-            })
-
-    return results
-
-
-# ============================================================
-# Notion persistence
-# ============================================================
-
-def persist_investigation(result):
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "reason": "Cannot persist failed investigation.",
-        }
-
-    url = result.get("url")
-
-    if not url:
-        return {
-            "ok": False,
-            "reason": "Investigation has no URL.",
-        }
-
-    research = result.get(
-        "research",
-        result.get("result", ""),
+    # Clamp ourselves.
+    final_score = max(
+        0.0,
+        min(1.0, final_score),
     )
 
-    item = {
-        "url": url,
-        "title": (
-            result.get("title")
-            or "Research Investigation"
+    # A semantic "interesting" decision without any
+    # deterministic signal is not trusted.
+    if not signals:
+        interesting = False
+        final_score = 0.0
+
+    return {
+        "interesting": interesting,
+        "score": final_score,
+        "reason": reason,
+        "signals": (
+            model_signals
+            or signals
         ),
-        "summary": research,
+        "deterministic_signals": signals,
+        "deterministic_score": deterministic_score,
+        "model_used": True,
     }
 
-    return needle_notion.persist_research(
-        item
-    )
 
 
-# ============================================================
-# Batch research + persistence
-# ============================================================
+def _normalize_arxiv_decision(decision, paper):
+    """
+    Normalize common structural-token failures from local Needle.
 
-def run_blog_research(limit=5):
-    results = research_interesting_blogs(
-        limit
-    )
+    Needle.extract() is responsible only for the semantic decision.
+    Python validates and cleans the returned fields before persistence.
+    """
 
-    persisted = []
-    failed = []
+    title = str(
+        paper.get("title") or ""
+    ).strip()
 
-    for result in results:
-        if not result.get("ok"):
-            failed.append(result)
-            continue
+    reason = str(
+        getattr(decision, "reason", "") or ""
+    ).strip()
 
-        try:
-            persistence = persist_investigation(
-                result
+    technical_area = str(
+        getattr(decision, "technical_area", "") or ""
+    ).strip()
+
+    bad_reason_values = {
+        "",
+        title,
+        "TITLE:",
+        "ABSTRACT:",
+        "CATEGORIES:",
+        "DETERMINISTIC SCORE:",
+        "DETERMINISTIC SIGNALS:",
+    }
+
+    bad_area_values = {
+        "",
+        "TITLE:",
+        "ABSTRACT:",
+        "CATEGORIES:",
+        "DETERMINISTIC SCORE:",
+        "DETERMINISTIC SIGNALS:",
+    }
+
+    if reason in bad_reason_values:
+        signals = paper.get(
+            "signals",
+            paper.get("deterministic_signals", []),
+        )
+
+        if isinstance(signals, (list, tuple, set)):
+            signal_text = ", ".join(
+                str(x) for x in signals
+                if str(x).strip()
+            )
+        else:
+            signal_text = str(signals or "").strip()
+
+        if signal_text:
+            reason = (
+                "The paper contains technical signals relevant "
+                f"to AI systems: {signal_text}."
+            )
+        else:
+            reason = (
+                "The paper contains a technical contribution "
+                "relevant to the configured AI-systems research scope."
             )
 
-            persisted.append({
-                "title": result.get("title"),
-                "url": result.get("url"),
-                "persistence": persistence,
-            })
+    if technical_area in bad_area_values:
+        categories = paper.get("categories", [])
 
-        except Exception as exc:
-            failed.append({
-                "title": result.get("title"),
-                "url": result.get("url"),
-                "error": (
-                    f"{type(exc).__name__}: {exc}"
-                ),
-            })
+        if isinstance(categories, (list, tuple, set)):
+            category_text = " ".join(
+                str(x) for x in categories
+            ).lower()
+        else:
+            category_text = str(categories or "").lower()
+
+        if any(
+            x in category_text
+            for x in ("cs.lg", "cs.ai", "cs.cl")
+        ):
+            technical_area = "Machine Learning / AI"
+        elif "cs.dc" in category_text:
+            technical_area = "Distributed Systems"
+        else:
+            technical_area = "AI Systems"
+
+    return reason, technical_area
+
+
+
+# ============================================================
+# Deterministic arXiv relevance scorer
+# ============================================================
+
+ARXIV_POSITIVE_SIGNALS = {
+    # Model architecture
+    "large language model": 8,
+    "language model": 5,
+    "transformer": 6,
+    "attention": 4,
+    "mixture of experts": 8,
+    "moe": 6,
+
+    # Inference / serving
+    "inference": 8,
+    "serving": 7,
+    "speculative decoding": 10,
+
+    # GPU / systems
+    "cuda": 10,
+    "gpu": 8,
+    "kernel": 9,
+    "triton": 9,
+    "compiler": 8,
+    "distributed": 7,
+
+    # ML systems / efficiency
+    "quantization": 7,
+    "memory": 5,
+    "optimization": 6,
+    "efficient": 4,
+    "systems": 6,
+    "benchmark": 3,
+
+    # Agents / training
+    "agent": 5,
+    "agents": 5,
+    "reinforcement learning": 5,
+    "post-training": 6,
+    "fine-tuning": 5,
+}
+
+ARXIV_NEGATIVE_SIGNALS = {
+    "survey": -8,
+    "tutorial": -8,
+    "position paper": -8,
+    "review": -7,
+    "perspective": -7,
+}
+
+
+def score_arxiv_paper(paper):
+    """
+    Deterministic first-pass arXiv relevance score.
+
+    The score represents technical relevance evidence, not
+    model confidence or probability.
+
+    Strong systems/architecture signals receive substantially
+    more weight than generic ML terminology.
+    """
+
+    categories = paper.get("categories", [])
+
+    if isinstance(categories, (list, tuple, set)):
+        categories_text = " ".join(
+            str(x) for x in categories
+        )
+    else:
+        categories_text = str(categories or "")
+
+    title = str(
+        paper.get("title", "") or ""
+    )
+
+    abstract = str(
+        paper.get("abstract", "") or ""
+    )
+
+    text = " ".join([
+        title,
+        abstract,
+        categories_text,
+    ]).lower()
+
+    raw = 0.0
+    signals = []
+
+    for term, weight in ARXIV_POSITIVE_SIGNALS.items():
+        if term in text:
+            raw += weight
+            signals.append(term)
+
+    for term, weight in ARXIV_NEGATIVE_SIGNALS.items():
+        if term in text:
+            raw += weight
+            signals.append(
+                "negative:" + term
+            )
+
+    # --------------------------------------------------------
+    # Title bonus
+    #
+    # A technical term appearing in the title is stronger
+    # evidence than the same term appearing incidentally
+    # in an abstract.
+    # --------------------------------------------------------
+
+    title_text = title.lower()
+
+    title_bonus = 0.0
+
+    for term in (
+        "transformer",
+        "attention",
+        "inference",
+        "serving",
+        "cuda",
+        "gpu",
+        "kernel",
+        "triton",
+        "compiler",
+        "distributed",
+        "quantization",
+        "speculative decoding",
+        "mixture of experts",
+        "moe",
+        "agent",
+        "agents",
+    ):
+        if term in title_text:
+            title_bonus += 3.0
+
+    raw += title_bonus
+
+    # --------------------------------------------------------
+    # Category bonus
+    #
+    # cs.LG / cs.AI / cs.CL / cs.DC are useful discovery
+    # categories but are deliberately weak evidence.
+    # --------------------------------------------------------
+
+    categories_lower = categories_text.lower()
+
+    if any(
+        category in categories_lower
+        for category in (
+            "cs.lg",
+            "cs.ai",
+            "cs.cl",
+            "cs.dc",
+        )
+    ):
+        raw += 1.0
+
+    # --------------------------------------------------------
+    # Normalize.
+    #
+    # 30 is the promotion-oriented reference point rather
+    # than a probabilistic interpretation.
+    # --------------------------------------------------------
+
+    score = max(
+        0.0,
+        min(
+            1.0,
+            raw / 30.0,
+        ),
+    )
+
+    return round(score, 3), signals
+
+
+class ArxivCurationDecision(BaseModel):
+    """
+    Semantic decision made by the local Research Needle.
+
+    Identity, ranking and persistence are deliberately handled
+    by deterministic Python code.
+    """
+
+    interesting: bool = Field(
+        description=(
+            "True only when the paper contains a substantial "
+            "technical contribution relevant to AI systems."
+        )
+    )
+
+    reason: str = Field(
+        description=(
+            "Concise technical explanation supporting the "
+            "interesting/not-interesting decision."
+        )
+    )
+
+    technical_area: str = Field(
+        description=(
+            "Primary technical area, for example GPU systems, "
+            "CUDA, inference, distributed systems, agents, "
+            "machine learning, compilers, or NLP."
+        )
+    )
+
+
+def curate_arxiv_papers(
+    papers=None,
+    limit=20,
+    query="cat:cs.LG OR cat:cs.AI OR cat:cs.CL OR cat:cs.DC",
+    days=7,
+):
+    """
+    Curate arXiv papers using deterministic relevance scoring.
+
+    Architecture:
+
+        arxiv_discover()
+            ->
+        deterministic scoring
+            ->
+        deterministic filtering
+            ->
+        persistence
+            ->
+        ranking
+
+    Needle is deliberately NOT authoritative for the
+    interesting/not-interesting decision.
+
+    This prevents malformed or hallucinated structured
+    model output from changing research selection.
+    """
+
+    # --------------------------------------------------------
+    # STEP 1 — Discovery
+    # --------------------------------------------------------
+
+    if papers is None:
+        discovered = arxiv_discover(
+            query=query,
+            limit=limit,
+            days=days,
+        )
+    else:
+        discovered = papers
+
+    if not discovered:
+        return {
+            "discovered": 0,
+            "interesting": 0,
+            "papers": [],
+        }
+
+    # --------------------------------------------------------
+    # STEP 2 — Deterministic scoring
+    # --------------------------------------------------------
+
+    candidates = []
+
+    for paper in discovered:
+
+        deterministic_score, signals = (
+            score_arxiv_paper(paper)
+        )
+
+        item = dict(paper)
+
+        item["deterministic_score"] = float(
+            deterministic_score
+        )
+
+        item["signals"] = signals
+
+        # Needle fields remain present for schema compatibility.
+        item["needle_score"] = None
+        item["needle_interesting"] = None
+
+        candidates.append(item)
+
+        # Persist discovery immediately.
+        state.upsert_research_paper(item)
+
+    # --------------------------------------------------------
+    # STEP 3 — Deterministic curation
+    # --------------------------------------------------------
+
+    final = []
+
+    for item in candidates:
+
+        deterministic_score = float(
+            item.get(
+                "deterministic_score",
+                0.0,
+            )
+        )
+
+        signals = item.get(
+            "signals",
+            [],
+        )
+
+        # No technical signal means no reason to spend
+        # downstream research effort on the paper.
+        if deterministic_score <= 0.0:
+            interesting = False
+
+            reason = (
+                "No configured AI-systems technical "
+                "relevance signals were found."
+            )
+
+            technical_area = ""
+
+        # Strong deterministic relevance.
+        elif deterministic_score >= 0.30:
+            interesting = True
+
+            reason = (
+                "Deterministic technical relevance signals: "
+                + ", ".join(
+                    str(x) for x in signals
+                )
+                + "."
+            )
+
+            technical_area = (
+                _infer_arxiv_technical_area(
+                    signals
+                )
+            )
+
+        # Borderline papers are retained in the database but
+        # are not promoted into the interesting set.
+        else:
+            interesting = False
+
+            reason = (
+                "Technical signals were detected, but the "
+                "deterministic relevance score is below "
+                "the curation threshold."
+            )
+
+            technical_area = (
+                _infer_arxiv_technical_area(
+                    signals
+                )
+            )
+
+        item["needle_score"] = None
+        item["needle_interesting"] = None
+
+        item["score"] = round(
+            deterministic_score,
+            3,
+        )
+
+        item["interesting"] = interesting
+        item["reason"] = reason
+        item["technical_area"] = technical_area
+
+        state.upsert_research_paper(item)
+
+        if interesting:
+            final.append(item)
+
+    # --------------------------------------------------------
+    # STEP 4 — Ranking
+    # --------------------------------------------------------
+
+    final.sort(
+        key=lambda x: (
+            x.get("score", 0.0),
+            x.get("deterministic_score", 0.0),
+        ),
+        reverse=True,
+    )
 
     return {
-        "researched": len(results),
-        "persisted": len(persisted),
-        "failed": len(failed),
-        "results": results,
-        "persisted_items": persisted,
-        "errors": failed,
+        "discovered": len(discovered),
+        "interesting": len(final),
+        "papers": final,
     }
+
+
+def _infer_arxiv_technical_area(signals):
+    """
+    Convert deterministic signal matches into a concise
+    technical area.
+
+    This is intentionally rule-based and cannot invent
+    information.
+    """
+
+    signals = {
+        str(x).lower()
+        for x in (signals or [])
+    }
+
+    if signals & {
+        "cuda",
+        "gpu",
+        "kernel",
+        "triton",
+    }:
+        return "GPU Systems"
+
+    if signals & {
+        "inference",
+        "serving",
+        "speculative decoding",
+    }:
+        return "Inference"
+
+    if signals & {
+        "distributed",
+    }:
+        return "Distributed Systems"
+
+    if signals & {
+        "compiler",
+    }:
+        return "Compilers"
+
+    if signals & {
+        "agent",
+        "agents",
+    }:
+        return "Agents"
+
+    if signals & {
+        "mixture of experts",
+        "moe",
+    }:
+        return "Mixture-of-Experts"
+
+    if signals & {
+        "transformer",
+        "attention",
+        "large language model",
+        "language model",
+    }:
+        return "Model Architecture"
+
+    if signals & {
+        "quantization",
+        "optimization",
+        "efficient",
+    }:
+        return "Efficient ML"
+
+    if signals & {
+        "reinforcement learning",
+        "post-training",
+        "fine-tuning",
+    }:
+        return "Training / Post-Training"
+
+    if signals:
+        return "Machine Learning / AI"
+
+    return ""
+
+def interesting_arxiv_papers(limit=20):
+    return state.interesting_research_papers(
+        limit
+    )
 
 
 # ============================================================
@@ -523,3 +1068,41 @@ def run(
         prompt,
         max_new_tokens=768,
     )
+
+
+
+# ============================================================
+# arXiv Research Needle entry point
+# ============================================================
+
+def run_arxiv_research(limit=10):
+    """
+    Discover and curate arXiv papers.
+
+    Discovery remains deterministic through the MCP capability.
+    Semantic selection is handled by Needle.extract().
+    """
+
+    papers = call(
+        "arxiv_discover",
+        limit=limit,
+    )
+
+    if not isinstance(papers, list):
+        return {
+            "ok": False,
+            "error": "arxiv_discover did not return a list.",
+            "discovered": 0,
+            "classified": 0,
+            "interesting": 0,
+            "papers": [],
+        }
+
+    result = curate_arxiv_papers(
+        papers
+    )
+
+    return {
+        "ok": True,
+        **result,
+    }

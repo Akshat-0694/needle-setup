@@ -272,6 +272,189 @@ def opportunity_interesting(
     return state.interesting_people(limit)
 
 
+# ============================================================
+# ARXIV DISCOVERY
+# V2 additive capability.
+# ============================================================
+
+@mcp.tool()
+def arxiv_discover(
+    query: str = "cat:cs.LG OR cat:cs.AI OR cat:cs.CL OR cat:cs.DC",
+    limit: int = 20,
+    days: int = 7,
+):
+    """
+    Discover recent arXiv papers.
+
+    This capability performs deterministic discovery only.
+    It does not decide whether a paper is interesting.
+    """
+
+    import re
+    import urllib.parse
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timedelta, timezone
+
+    limit = max(1, min(int(limit), 100))
+    days = max(1, min(int(days), 90))
+
+    params = urllib.parse.urlencode({
+        "search_query": query,
+        "start": 0,
+        "max_results": limit,
+        "sortBy": "submittedDate",
+        "sortOrder": "descending",
+    })
+
+    request = urllib.request.Request(
+        "https://export.arxiv.org/api/query?" + params,
+        headers={
+            "User-Agent": "NeedleDaily/2.0"
+        },
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=30,
+    ) as response:
+        xml_data = response.read()
+
+    root = ET.fromstring(xml_data)
+
+    ns = {
+        "atom": "http://www.w3.org/2005/Atom",
+    }
+
+    cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(days=days)
+    )
+
+    papers = []
+
+    for entry in root.findall(
+        "atom:entry",
+        ns,
+    ):
+        raw_id = (
+            entry.findtext(
+                "atom:id",
+                "",
+                ns,
+            )
+            .strip()
+        )
+
+        match = re.search(
+            r"arxiv\.org/(?:abs/)?([^?#]+)",
+            raw_id,
+        )
+
+        if not match:
+            continue
+
+        arxiv_id = match.group(1).strip()
+
+        # Remove version suffix for stable identity.
+        arxiv_id = re.sub(
+            r"v\d+$",
+            "",
+            arxiv_id,
+        )
+
+        published = (
+            entry.findtext(
+                "atom:published",
+                "",
+                ns,
+            )
+            .strip()
+        )
+
+        updated = (
+            entry.findtext(
+                "atom:updated",
+                "",
+                ns,
+            )
+            .strip()
+        )
+
+        try:
+            published_dt = datetime.fromisoformat(
+                published.replace(
+                    "Z",
+                    "+00:00",
+                )
+            )
+        except Exception:
+            published_dt = None
+
+        if (
+            published_dt
+            and published_dt < cutoff
+        ):
+            continue
+
+        title = " ".join(
+            entry.findtext(
+                "atom:title",
+                "",
+                ns,
+            ).split()
+        )
+
+        abstract = " ".join(
+            entry.findtext(
+                "atom:summary",
+                "",
+                ns,
+            ).split()
+        )
+
+        authors = [
+            x.findtext(
+                "atom:name",
+                "",
+                ns,
+            ).strip()
+            for x in entry.findall(
+                "atom:author",
+                ns,
+            )
+        ]
+
+        categories = [
+            x.attrib.get(
+                "term",
+                "",
+            )
+            for x in entry.findall(
+                "atom:category",
+                ns,
+            )
+            if x.attrib.get("term")
+        ]
+
+        papers.append({
+            "arxiv_id": arxiv_id,
+            "url": (
+                "https://arxiv.org/abs/"
+                + arxiv_id
+            ),
+            "title": title,
+            "authors": ", ".join(authors),
+            "abstract": abstract,
+            "published_at": published,
+            "updated_at": updated,
+            "categories": ", ".join(categories),
+            "source": "arxiv",
+        })
+
+    return papers
+
+
 if __name__ == "__main__":
     mcp.run(
         transport="streamable-http",

@@ -76,6 +76,313 @@ def mark_articles_notified(urls):
 
     db.commit()
 
+
+# --- Research paper persistence ---
+# V2 additive layer. Existing task/article/person/GitHub
+# persistence remains unchanged.
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS research_papers(
+    arxiv_id TEXT PRIMARY KEY,
+    url TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    authors TEXT DEFAULT '',
+    abstract TEXT DEFAULT '',
+    published_at TEXT,
+    updated_at TEXT,
+    categories TEXT DEFAULT '',
+    source TEXT DEFAULT 'arxiv',
+
+    deterministic_score REAL DEFAULT 0,
+    needle_score REAL DEFAULT 0,
+    score REAL DEFAULT 0,
+
+    interesting INTEGER DEFAULT 0,
+    researched INTEGER DEFAULT 0,
+
+    reason TEXT DEFAULT '',
+    technical_area TEXT DEFAULT '',
+    implementation_url TEXT,
+
+    notified INTEGER DEFAULT 0,
+    notified_at TEXT,
+
+    notion_page_id TEXT,
+    notion_url TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def upsert_research_paper(item):
+    """
+    Insert or update an arXiv research paper.
+
+    IMPORTANT:
+    This function matches the existing research_papers schema.
+    Structured fields such as authors/categories/signals are
+    serialized before crossing the SQLite boundary.
+    """
+
+    arxiv_id = item.get(
+        "arxiv_id",
+        item.get("id", ""),
+    )
+
+    url = item.get("url")
+
+    if not url and arxiv_id:
+        url = (
+            "https://arxiv.org/abs/"
+            + str(arxiv_id)
+        )
+
+    authors = item.get("authors", [])
+
+    if isinstance(authors, (list, tuple, set)):
+        authors = json.dumps(
+            list(authors),
+            ensure_ascii=False,
+            default=str,
+        )
+    else:
+        authors = str(authors or "")
+
+    categories = item.get("categories", [])
+
+    if isinstance(categories, (list, tuple, set)):
+        categories = json.dumps(
+            list(categories),
+            ensure_ascii=False,
+            default=str,
+        )
+    else:
+        categories = str(categories or "")
+
+    # The existing schema does not have a signals column.
+    # Store the deterministic signals alongside the reason.
+    signals = item.get("signals", [])
+
+    if isinstance(signals, (list, tuple, set)):
+        signals_text = ", ".join(
+            str(x) for x in signals
+        )
+    else:
+        signals_text = str(signals or "")
+
+    reason = str(
+        item.get("reason", "")
+        or ""
+    )
+
+    if signals_text:
+        if reason:
+            reason = (
+                reason
+                + " | Signals: "
+                + signals_text
+            )
+        else:
+            reason = (
+                "Signals: "
+                + signals_text
+            )
+
+    needle_score = item.get(
+        "needle_score",
+        item.get("score"),
+    )
+
+    score = item.get(
+        "score",
+        item.get("deterministic_score", 0.0),
+    )
+
+    state_source = item.get(
+        "source",
+        "arxiv",
+    )
+
+    db.execute(
+        """
+        INSERT INTO research_papers(
+            arxiv_id,
+            url,
+            title,
+            authors,
+            abstract,
+            published_at,
+            updated_at,
+            categories,
+            source,
+            deterministic_score,
+            needle_score,
+            score,
+            interesting,
+            researched,
+            reason,
+            technical_area,
+            implementation_url,
+            notified,
+            notified_at,
+            notion_page_id,
+            notion_url
+        )
+        VALUES(
+            ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+        )
+        ON CONFLICT(arxiv_id) DO UPDATE SET
+            url=excluded.url,
+            title=excluded.title,
+            authors=excluded.authors,
+            abstract=excluded.abstract,
+            published_at=excluded.published_at,
+            updated_at=excluded.updated_at,
+            categories=excluded.categories,
+            source=excluded.source,
+            deterministic_score=excluded.deterministic_score,
+            needle_score=excluded.needle_score,
+            score=excluded.score,
+            interesting=excluded.interesting,
+            researched=excluded.researched,
+            reason=excluded.reason,
+            technical_area=excluded.technical_area,
+            implementation_url=excluded.implementation_url
+        """,
+        (
+            arxiv_id,
+            url,
+            item.get("title", ""),
+            authors,
+            item.get("abstract", ""),
+            item.get(
+                "published_at",
+                item.get("published", ""),
+            ),
+            item.get(
+                "updated_at",
+                item.get("updated", ""),
+            ),
+            categories,
+            state_source,
+            item.get(
+                "deterministic_score",
+                0.0,
+            ),
+            needle_score,
+            score,
+            int(
+                bool(
+                    item.get(
+                        "interesting",
+                        False,
+                    )
+                )
+            ),
+            int(
+                bool(
+                    item.get(
+                        "researched",
+                        False,
+                    )
+                )
+            ),
+            reason,
+            item.get(
+                "technical_area",
+                "",
+            ),
+            item.get(
+                "implementation_url"
+            ),
+            int(
+                bool(
+                    item.get(
+                        "notified",
+                        False,
+                    )
+                )
+            ),
+            item.get("notified_at"),
+            item.get("notion_page_id"),
+            item.get("notion_url"),
+        ),
+    )
+
+    db.commit()
+
+def research_paper_candidates(n=50):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM research_papers
+        WHERE interesting=0
+        ORDER BY published_at DESC, created_at DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def interesting_research_papers(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM research_papers
+        WHERE interesting=1
+        ORDER BY score DESC, published_at DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def unnotified_research_papers(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM research_papers
+        WHERE interesting=1
+          AND notified=0
+        ORDER BY score DESC, published_at DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def mark_research_papers_notified(arxiv_ids):
+    if not arxiv_ids:
+        return
+
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    db.executemany(
+        """
+        UPDATE research_papers
+        SET notified=1,
+            notified_at=?
+        WHERE arxiv_id=?
+        """,
+        [
+            (now, arxiv_id)
+            for arxiv_id in arxiv_ids
+        ],
+    )
+
+    db.commit()
+
 # --- GitHub repository persistence ---
 
 db.execute("""
