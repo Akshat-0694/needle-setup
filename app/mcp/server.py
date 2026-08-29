@@ -455,6 +455,223 @@ def arxiv_discover(
     return papers
 
 
+# ============================================================
+# HUGGING FACE MODEL DISCOVERY
+# V1 additive capability.
+# ============================================================
+
+@mcp.tool()
+def hf_discover(
+    query: str = "",
+    limit: int = 20,
+    sort: str = "trendingScore",
+):
+    """
+    Discover Hugging Face models.
+
+    This capability performs deterministic discovery only.
+    It does not decide whether a model is interesting.
+
+    Multiple technical search lanes are used when no explicit
+    query is supplied. Results are deduplicated by model ID.
+    """
+
+    limit = max(1, min(int(limit), 100))
+
+    allowed_sorts = {
+        "trendingScore",
+        "downloads",
+        "likes",
+        "lastModified",
+    }
+
+    if sort not in allowed_sorts:
+        sort = "trendingScore"
+
+    if query:
+        queries = [str(query).strip()]
+    else:
+        # Search lanes intentionally mirror the curator's
+        # strong technical vocabulary. Avoid generic queries
+        # such as "LLM" or "transformer" because they produce
+        # large numbers of low-signal model variants.
+        queries = [
+            "vllm",
+            "speculative decoding",
+            "flashattention",
+            "triton",
+            "CUDA",
+            "quantization",
+            "AWQ",
+            "GPTQ",
+            "bitsandbytes",
+            "mixture of experts",
+            "expert pruning",
+            "QLoRA",
+            "GGUF",
+            "llama.cpp",
+        ]
+
+    headers = {
+        "User-Agent": "NeedleDaily/2.0",
+        "Accept": "application/json",
+    }
+
+    if settings.hf_token:
+        headers["Authorization"] = (
+            "Bearer " + settings.hf_token
+        )
+
+    models_by_id = {}
+
+    # Give every technical lane a chance to contribute.
+    # The final result is still capped by `limit`.
+    # Search broadly across every technical lane before
+    # applying the final result limit.
+    per_query_limit = min(
+        10,
+        max(5, limit),
+    )
+
+    for search_query in queries:
+
+        params = {
+            "search": search_query,
+            "limit": per_query_limit,
+            "sort": sort,
+            "direction": -1,
+        }
+
+        try:
+            response = httpx.get(
+                "https://huggingface.co/api/models",
+                params=params,
+                headers=headers,
+                timeout=30,
+                follow_redirects=True,
+            )
+
+            response.raise_for_status()
+
+            payload = response.json()
+
+        except Exception:
+            # Discovery should remain best-effort across
+            # independent search lanes.
+            continue
+
+        if not isinstance(payload, list):
+            continue
+
+        for model in payload:
+
+            if not isinstance(model, dict):
+                continue
+
+            model_id = (
+                model.get("id")
+                or model.get("modelId")
+            )
+
+            if not model_id:
+                continue
+
+            model_id = str(model_id)
+
+            if model_id in models_by_id:
+                continue
+
+            tags = model.get("tags") or []
+
+            if not isinstance(tags, list):
+                tags = [str(tags)]
+
+            models_by_id[model_id] = {
+                "model_id": model_id,
+                "url": (
+                    "https://huggingface.co/"
+                    + model_id
+                ),
+                "author": (
+                    model.get("author")
+                    or ""
+                ),
+                "pipeline_tag": (
+                    model.get("pipeline_tag")
+                    or ""
+                ),
+                "library_name": (
+                    model.get("library_name")
+                    or ""
+                ),
+                "tags": [
+                    str(x)
+                    for x in tags
+                ],
+                "description": (
+                    model.get("description")
+                    or ""
+                ),
+                "downloads": int(
+                    model.get("downloads") or 0
+                ),
+                "likes": int(
+                    model.get("likes") or 0
+                ),
+                "trending_score": float(
+                    model.get("trendingScore") or 0
+                ),
+                "created_at_hf": (
+                    model.get("createdAt")
+                    or ""
+                ),
+                "last_modified": (
+                    model.get("lastModified")
+                    or ""
+                ),
+                "source": "huggingface",
+            }
+
+            # Continue collecting from every technical lane.
+            # Final ranking happens after all lanes have run.
+
+    # --------------------------------------------------------
+    # Rank the discovery pool using popularity metadata only.
+    #
+    # This is NOT relevance scoring. Technical relevance is
+    # handled later by score_hf_model().
+    # --------------------------------------------------------
+
+    models = list(models_by_id.values())
+
+    def discovery_rank(item):
+        trending = float(
+            item.get("trending_score") or 0
+        )
+
+        likes = int(
+            item.get("likes") or 0
+        )
+
+        downloads = int(
+            item.get("downloads") or 0
+        )
+
+        return (
+            trending,
+            likes,
+            downloads,
+        )
+
+    models.sort(
+        key=discovery_rank,
+        reverse=True,
+    )
+
+    return models[:limit]
+
+
+
 if __name__ == "__main__":
     mcp.run(
         transport="streamable-http",

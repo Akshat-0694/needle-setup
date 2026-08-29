@@ -1037,6 +1037,599 @@ def _infer_arxiv_technical_area(signals):
 
     return ""
 
+
+# ============================================================
+# HUGGING FACE MODEL CURATION
+# V1 deterministic curator.
+# ============================================================
+
+HF_POSITIVE_SIGNALS = {
+    # Strong technical/system signals
+    "vllm": 8,
+    "speculative-decoding": 9,
+    "draft-model": 7,
+
+    "flashattention": 9,
+    "triton": 9,
+    "cuda": 8,
+
+    "quantization": 8,
+    "quantized": 4,
+    "awq": 8,
+    "gptq": 8,
+    "bitsandbytes": 7,
+
+    "mixture-of-experts": 9,
+    "expert-pruning": 8,
+    "moe": 7,
+
+    # Model adaptation / training
+    "fine-tuning": 5,
+    "lora": 5,
+    "qlora": 7,
+    "distillation": 6,
+
+    # Agent / reasoning work
+    "agentic": 6,
+    "agent": 4,
+    "tool-use": 5,
+    "reasoning": 4,
+
+    # Local inference ecosystem
+    "gguf": 5,
+    "llama.cpp": 6,
+}
+
+HF_NEGATIVE_SIGNALS = {
+    "test": -5,
+    "demo": -3,
+    "toy": -4,
+}
+
+
+HF_STRONG_SIGNALS = {
+    "vllm",
+    "speculative-decoding",
+    "draft-model",
+    "flashattention",
+    "triton",
+    "cuda",
+    "quantization",
+    "awq",
+    "gptq",
+    "bitsandbytes",
+    "mixture-of-experts",
+    "expert-pruning",
+    "moe",
+    "qlora",
+    "llama.cpp",
+}
+
+
+def _hf_model_text(model):
+    fields = [
+        model.get("model_id", ""),
+        model.get("description", ""),
+        model.get("pipeline_tag", ""),
+        model.get("library_name", ""),
+    ]
+
+    tags = model.get("tags", [])
+
+    if isinstance(tags, (list, tuple, set)):
+        fields.extend(str(x) for x in tags)
+    elif tags:
+        fields.append(str(tags))
+
+    return " ".join(
+        str(x or "")
+        for x in fields
+    ).lower()
+
+
+def _hf_popularity_score(model):
+    import math
+
+    downloads = float(
+        model.get("downloads") or 0
+    )
+
+    likes = float(
+        model.get("likes") or 0
+    )
+
+    trending = float(
+        model.get("trending_score") or 0
+    )
+
+    return min(
+        1.0,
+        (
+            0.55 * min(
+                1.0,
+                math.log10(downloads + 1) / 8.0,
+            )
+            +
+            0.25 * min(
+                1.0,
+                math.log10(likes + 1) / 5.0,
+            )
+            +
+            0.20 * min(
+                1.0,
+                trending / 100.0,
+            )
+        ),
+    )
+
+
+def score_hf_model(model):
+    """
+    Deterministic HF relevance score.
+
+    Technical signals dominate popularity.
+    Generic ecosystem metadata such as transformers
+    and text-generation is intentionally not treated
+    as strong evidence of technical novelty.
+    """
+
+    text = _hf_model_text(model)
+
+    raw = 0.0
+    signals = []
+
+    for term, weight in HF_POSITIVE_SIGNALS.items():
+        if term in text:
+            raw += weight
+            signals.append(term)
+
+    for term, weight in HF_NEGATIVE_SIGNALS.items():
+        if term in text:
+            raw += weight
+            signals.append(
+                "negative:" + term
+            )
+
+    technical_score = max(
+        0.0,
+        min(
+            1.0,
+            raw / 35.0,
+        ),
+    )
+
+    popularity_score = _hf_popularity_score(
+        model
+    )
+
+    final_score = (
+        0.80 * technical_score
+        + 0.20 * popularity_score
+    )
+
+    return round(
+        max(
+            0.0,
+            min(
+                1.0,
+                final_score,
+            ),
+        ),
+        3,
+    ), signals
+
+
+def _infer_hf_technical_area(model):
+    text = _hf_model_text(model)
+
+    if any(
+        x in text
+        for x in (
+            "vllm",
+            "speculative-decoding",
+            "draft-model",
+        )
+    ):
+        return "Inference"
+
+    if any(
+        x in text
+        for x in (
+            "quantization",
+            "quantized",
+            "gguf",
+            "awq",
+            "gptq",
+            "bitsandbytes",
+            "llama.cpp",
+        )
+    ):
+        return "Quantization / Local Inference"
+
+    if any(
+        x in text
+        for x in (
+            "cuda",
+            "triton",
+            "flashattention",
+        )
+    ):
+        return "GPU Systems"
+
+    if any(
+        x in text
+        for x in (
+            "mixture-of-experts",
+            "expert-pruning",
+            "moe",
+        )
+    ):
+        return "MoE / Model Architecture"
+
+    if any(
+        x in text
+        for x in (
+            "agentic",
+            "agent",
+            "tool-use",
+        )
+    ):
+        return "Agents"
+
+    if any(
+        x in text
+        for x in (
+            "qlora",
+            "lora",
+            "fine-tuning",
+            "distillation",
+        )
+    ):
+        return "Model Adaptation"
+
+    if "reasoning" in text:
+        return "Reasoning"
+
+    return ""
+
+
+def _hf_family_key(model):
+    """
+    Conservative family key used to suppress obvious
+    duplicate/quantized/precision variants.
+
+    This does not attempt full semantic entity resolution.
+    """
+
+    import re
+
+    model_id = str(
+        model.get("model_id", "")
+    ).lower()
+
+    # Remove common precision / packaging suffixes.
+    value = re.sub(
+        r"[-_](gguf|ggml|gptq|awq|int4|int8|fp4|fp8|"
+        r"4bit|8bit|16bit|32bit)$",
+        "",
+        model_id,
+    )
+
+    value = re.sub(
+        r"[-_](q[2-8]_[a-z0-9_]+)$",
+        "",
+        value,
+    )
+
+    value = re.sub(
+        r"[-_](quantized|quantization)$",
+        "",
+        value,
+    )
+
+    return value
+
+
+def curate_hf_models(
+    models=None,
+    limit=20,
+):
+    """
+    Discover and deterministically curate Hugging Face models.
+    """
+
+    if models is None:
+        from app.mcp.client import call
+
+        models = call(
+            "hf_discover",
+            limit=limit,
+        )
+
+    if not models:
+        return {
+            "discovered": 0,
+            "interesting": 0,
+            "models": [],
+        }
+
+    candidates = []
+
+    for model in models:
+        item = dict(model)
+
+        score, signals = score_hf_model(
+            item
+        )
+
+        strong_signals = [
+            x
+            for x in signals
+            if x in HF_STRONG_SIGNALS
+        ]
+
+        item["deterministic_score"] = score
+        item["score"] = score
+        item["signals"] = signals
+        item["strong_signals"] = strong_signals
+        item["technical_area"] = (
+            _infer_hf_technical_area(item)
+        )
+        item["family_key"] = (
+            _hf_family_key(item)
+        )
+
+        if signals:
+            item["reason"] = (
+                "Technical relevance signals: "
+                + ", ".join(signals)
+                + "."
+            )
+        else:
+            item["reason"] = (
+                "No strong technical relevance "
+                "signals detected."
+            )
+
+        # Strict technical curation.
+        #
+        # A strong systems signal is sufficient when the
+        # deterministic score is meaningfully relevant.
+        # Generic popularity must never create relevance.
+        item["interesting"] = bool(
+            strong_signals
+            and (
+                score >= 0.40
+                or len(strong_signals) >= 2
+            )
+        )
+
+        candidates.append(item)
+
+    # --------------------------------------------------------
+    # Suppress obvious model variants.
+    #
+    # Within a family, retain the highest-scoring model.
+    # --------------------------------------------------------
+
+    best_by_family = {}
+
+    for item in candidates:
+        if not item["interesting"]:
+            continue
+
+        key = item["family_key"]
+
+        previous = best_by_family.get(key)
+
+        if (
+            previous is None
+            or (
+                item["score"],
+                item.get("trending_score", 0),
+                item.get("downloads", 0),
+            )
+            >
+            (
+                previous["score"],
+                previous.get("trending_score", 0),
+                previous.get("downloads", 0),
+            )
+        ):
+            best_by_family[key] = item
+
+    final = list(
+        best_by_family.values()
+    )
+
+    final.sort(
+        key=lambda x: (
+            x.get("score", 0),
+            x.get("trending_score", 0),
+            x.get("downloads", 0),
+        ),
+        reverse=True,
+    )
+
+    # --------------------------------------------------------
+    # Persist every discovered model, including rejected ones.
+    # --------------------------------------------------------
+
+    for item in candidates:
+        state.db.execute(
+            """
+            INSERT INTO huggingface_models (
+                model_id,
+                url,
+                author,
+                pipeline_tag,
+                library_name,
+                tags,
+                description,
+                downloads,
+                likes,
+                trending_score,
+                created_at_hf,
+                last_modified,
+                deterministic_score,
+                score,
+                interesting,
+                reason,
+                technical_area
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(model_id) DO UPDATE SET
+                url=excluded.url,
+                author=excluded.author,
+                pipeline_tag=excluded.pipeline_tag,
+                library_name=excluded.library_name,
+                tags=excluded.tags,
+                description=excluded.description,
+                downloads=excluded.downloads,
+                likes=excluded.likes,
+                trending_score=excluded.trending_score,
+                created_at_hf=excluded.created_at_hf,
+                last_modified=excluded.last_modified,
+                deterministic_score=excluded.deterministic_score,
+                score=excluded.score,
+                interesting=excluded.interesting,
+                reason=excluded.reason,
+                technical_area=excluded.technical_area
+            """,
+            (
+                item.get("model_id", ""),
+                item.get("url", ""),
+                item.get("author", ""),
+                item.get("pipeline_tag", ""),
+                item.get("library_name", ""),
+                ", ".join(
+                    str(x)
+                    for x in (
+                        item.get("tags", [])
+                        if isinstance(
+                            item.get("tags", []),
+                            (list, tuple, set),
+                        )
+                        else [item.get("tags", "")]
+                    )
+                    if x
+                ),
+                item.get("description", ""),
+                int(item.get("downloads") or 0),
+                int(item.get("likes") or 0),
+                float(item.get("trending_score") or 0),
+                item.get("createdAt")
+                or item.get("created_at_hf"),
+                item.get("lastModified")
+                or item.get("last_modified"),
+                item["deterministic_score"],
+                item["score"],
+                int(
+                    item["interesting"]
+                ),
+                item["reason"],
+                item["technical_area"],
+            ),
+        )
+
+    # Important:
+    # reset previous interesting state for variants that
+    # were discovered again but are no longer selected.
+    selected_ids = {
+        x["model_id"]
+        for x in final
+    }
+
+    for item in candidates:
+        if (
+            item["model_id"]
+            not in selected_ids
+        ):
+            state.db.execute(
+                """
+                UPDATE huggingface_models
+                SET interesting=0
+                WHERE model_id=?
+                """,
+                (item["model_id"],),
+            )
+
+    # Mark the selected family representatives.
+    for item in final:
+        state.db.execute(
+            """
+            UPDATE huggingface_models
+            SET interesting=1
+            WHERE model_id=?
+            """,
+            (item["model_id"],),
+        )
+
+    state.db.commit()
+
+    return {
+        "discovered": len(candidates),
+        "interesting": len(final),
+        "models": final,
+    }
+
+def interesting_hf_models(limit=20):
+    rows = state.db.execute(
+        """
+        SELECT *
+        FROM huggingface_models
+        WHERE interesting=1
+        ORDER BY score DESC, trending_score DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def unnotified_hf_models(limit=20):
+    rows = state.db.execute(
+        """
+        SELECT *
+        FROM huggingface_models
+        WHERE interesting=1
+          AND notified=0
+        ORDER BY score DESC, trending_score DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def mark_hf_models_notified(model_ids):
+    if not model_ids:
+        return
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    state.db.executemany(
+        """
+        UPDATE huggingface_models
+        SET notified=1,
+            notified_at=?
+        WHERE model_id=?
+        """,
+        [
+            (now, model_id)
+            for model_id in model_ids
+        ],
+    )
+
+    state.db.commit()
+
 def interesting_arxiv_papers(limit=20):
     return state.interesting_research_papers(
         limit

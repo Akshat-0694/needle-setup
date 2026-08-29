@@ -9,5 +9,6 @@ class Settings:
     telegram_bot_token:str=os.getenv("TELEGRAM_BOT_TOKEN","")
     telegram_chat_id:str=os.getenv("TELEGRAM_CHAT_ID","")
     jina_api_key:str=os.getenv("JINA_API_KEY","")
+    hf_token:str=os.getenv("HF_TOKEN","")
     allow_side_effects:bool=os.getenv("ALLOW_SIDE_EFFECTS","false").lower()=="true"
 settings=Settings()
