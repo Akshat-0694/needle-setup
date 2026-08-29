@@ -47,6 +47,21 @@ def tasks():
     return state.list_tasks()
 
 
+@app.delete("/tasks/{task_id}")
+def task_delete(task_id: int):
+    return state.delete_task(task_id)
+
+
+@app.get("/calendar")
+def calendar_events(days: int = 7):
+    return state.list_calendar_events(days=days)
+
+
+@app.get("/ideas")
+def ideas_list(status: str = "open"):
+    return state.list_ideas(status)
+
+
 @app.get("/blogs")
 def blogs():
     return state.interesting_articles()

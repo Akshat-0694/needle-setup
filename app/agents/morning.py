@@ -13,7 +13,6 @@ from app.agents.github import (
     research_implementations,
 )
 from app.mcp.client import call
-from app.integrations import notion
 
 
 def _safe(fn, *args, **kwargs):
@@ -52,12 +51,27 @@ def _format_items(items, show_summary=False):
             if not title:
                 continue
 
-            line = f"• {title}"
+            when = ""
+
+            if item.get("event_date"):
+                when = f"  ({item['event_date']}"
+
+                if item.get("event_time"):
+                    when += f" {item['event_time']}"
+
+                when += ")"
+
+            line = f"• {title}{when}"
 
             if show_summary and item.get("summary"):
                 line += f" — {item['summary']}"
 
             lines.append(line)
+
+            details = item.get("details")
+
+            if details:
+                lines.append(f"  {details}")
 
             url = item.get("url")
 
@@ -69,42 +83,6 @@ def _format_items(items, show_summary=False):
     return lines
 
 
-def _format_notion_pages(result, limit=5):
-    lines = []
-
-    if not isinstance(result, dict):
-        return lines
-
-    for item in result.get("results", [])[:limit]:
-        page_id = item.get("id")
-        url = item.get("url")
-
-        title = "Untitled"
-
-        try:
-            props = item.get("properties", {})
-            title_prop = props.get("title", {})
-            title_parts = title_prop.get("title", [])
-
-            if title_parts:
-                title = title_parts[0].get("text", {}).get(
-                    "content",
-                    "Untitled",
-                )
-        except Exception:
-            pass
-
-        lines.append(f"• {title}")
-
-        if url:
-            lines.append(f"  {url}")
-
-        if page_id:
-            lines.append(f"  id: {page_id}")
-
-    return lines
-
-
 def _gather():
     return {
         "tasks": _safe(call, "tasks_list", status="open"),
@@ -112,8 +90,8 @@ def _gather():
         "people": _safe(call, "linkedin_interesting", limit=5),
         "trending": _safe(trending_projects, 5),
         "research": _safe(research_implementations, 5),
-        "calendar": _safe(notion.search, "today calendar"),
-        "ideas": _safe(notion.search, "ideas"),
+        "calendar": _safe(call, "calendar_list", days=7),
+        "ideas": _safe(call, "ideas_list", status="open"),
     }
 
 
@@ -149,16 +127,16 @@ def run(prompt="Prepare my morning briefing for today."):
 
         sections.append("\n".join(lines))
 
-    # --- Calendar / plans from Notion ---
-    calendar_lines = _format_notion_pages(data["calendar"])
+    # --- Calendar events ---
+    calendar_lines = _format_items(data["calendar"])
 
     if calendar_lines:
         sections.append(
-            "📅 Calendar & plans\n\n" + "\n".join(calendar_lines)
+            "📅 Calendar (next 7 days)\n\n" + "\n".join(calendar_lines)
         )
 
-    # --- Ideas from Notion ---
-    idea_lines = _format_notion_pages(data["ideas"])
+    # --- Ideas ---
+    idea_lines = _format_items(data["ideas"])
 
     if idea_lines:
         sections.append(

@@ -22,6 +22,8 @@ def list_tasks(status='open'):
  rows=db.execute('SELECT * FROM tasks '+('WHERE status=? ' if status!='all' else '')+'ORDER BY id DESC',((status,) if status!='all' else ())).fetchall();return [dict(r) for r in rows]
 def complete_task(i):
  db.execute("UPDATE tasks SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE id=?",(i,));db.commit();return get_task(i)
+def delete_task(i):
+ row=db.execute('DELETE FROM tasks WHERE id=?',(i,)).rowcount;db.commit();return int(row or 0)
 def add_reminder(task_id,when):
  c=db.execute('INSERT INTO reminders(task_id,remind_at) VALUES(?,?)',(task_id,when));db.commit();return c.lastrowid
 def due_reminders(now):
@@ -996,3 +998,137 @@ def spam_events_today():
 
 def last_spam_scan():
     return get_kv("last_spam_scan", None)
+
+
+# --- Calendar events ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS calendar_events(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    event_time TEXT DEFAULT '',
+    details TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def add_calendar_event(title, event_date, event_time="", details=""):
+    db.execute(
+        """
+        INSERT INTO calendar_events(title, event_date, event_time, details)
+        VALUES(?,?,?,?)
+        """,
+        (title, event_date, event_time, details),
+    )
+
+    db.commit()
+
+    return list_calendar_events(
+        from_date=event_date,
+        days=1,
+    )
+
+
+def list_calendar_events(from_date="", days=7):
+    if not from_date:
+        from_date = datetime.now(
+            ZoneInfo(settings.timezone)
+        ).strftime("%Y-%m-%d")
+
+    rows = db.execute(
+        """
+        SELECT *
+        FROM calendar_events
+        WHERE event_date >= ?
+        ORDER BY event_date ASC, event_time ASC
+        LIMIT ?
+        """,
+        (from_date, max(1, days) * 50),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def remove_calendar_event(event_id):
+    db.execute(
+        "DELETE FROM calendar_events WHERE id=?",
+        (event_id,),
+    )
+
+    db.commit()
+
+
+# --- Ideas ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS ideas(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    details TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def list_ideas(status="open"):
+    if status == "all":
+        rows = db.execute(
+            "SELECT * FROM ideas ORDER BY id DESC"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM ideas WHERE status=? ORDER BY id DESC",
+            (status,),
+        ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def add_idea(title, details=""):
+    db.execute(
+        "INSERT INTO ideas(title, details) VALUES(?,?)",
+        (title, details),
+    )
+
+    db.commit()
+
+
+def update_idea(idea_id, title=None, details=None):
+    if title is not None:
+        db.execute(
+            "UPDATE ideas SET title=? WHERE id=?",
+            (title, idea_id),
+        )
+
+    if details is not None:
+        db.execute(
+            "UPDATE ideas SET details=? WHERE id=?",
+            (details, idea_id),
+        )
+
+    db.commit()
+
+
+def complete_idea(idea_id):
+    db.execute(
+        "UPDATE ideas SET status='done' WHERE id=?",
+        (idea_id,),
+    )
+
+    db.commit()
+
+
+def remove_idea(idea_id):
+    db.execute(
+        "DELETE FROM ideas WHERE id=?",
+        (idea_id,),
+    )
+
+    db.commit()

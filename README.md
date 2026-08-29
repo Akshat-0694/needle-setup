@@ -7,8 +7,9 @@ Personal multi-agent runtime around Cactus Needle 2 and MCP. Runs on a server (E
 | Needle | What it does | Trigger |
 |---|---|---|
 | **Morning** | Pings you each morning (default `08:30`, configurable) with the day's tasks, Notion calendar/ideas, industry reads, GitHub projects, research and network opportunities | Scheduled + `/morning` |
-| **Task** | Manage tasks and reminders from natural language | Any message + `/tasks`, `/done <id>` |
-| **Calendar / Ideas** | Reads your Notion workspace (search + read pages) | Part of Morning brief, and available via `/morning` |
+| **Task** | Manage tasks and reminders from natural language | Any message + `/tasks`, `/done <id>`, `/remove <id>`, `/delete <id>` |
+| **Calendar** | Your own calendar: add events, list upcoming, remove | `/calendar`, `/calendar add …`, `/remove_event <id>` |
+| **Ideas** | Capture and organize ideas | `/ideas`, `/ideas add …`, `/idea done <id>`, `/remove_idea <id>` |
 | **GitHub** | Read-only `gh` CLI: trending open source + research implementations | `/github …` or keywords + scheduled |
 | **Info** | General web browsing via Jina Reader, plus arXiv discovery | `research …`, `look up …` |
 | **Hugging Face** | Discovers and curates high-signal models (vLLM, speculative decoding, CUDA, quantization, …) | Scheduled |
@@ -57,12 +58,31 @@ curl http://127.0.0.1:8000/health
 
 ## Telegram commands
 
-`/health` (or `/status`), `/tasks`, `/done <id>`, `/blogs`, `/people`,
-`/opportunities`, `/add_opportunity <url> <title>`,
-`/remove_opportunity <id>`, `/spam`, `/spam scan`, `/morning`.
+`/health` (or `/status`), `/tasks`, `/done <id>`, `/remove <id>`,
+`/delete <id>`, `/calendar`, `/calendar add <event>`, `/remove_event <id>`,
+`/ideas`, `/ideas add <idea>`, `/idea done <id>`, `/remove_idea <id>`,
+`/blogs`, `/people`, `/opportunities`,
+`/add_opportunity <url> <title>`, `/remove_opportunity <id>`,
+`/spam`, `/spam scan`, `/morning`.
 
-Natural language is routed to the matching Needle (tasks, github, blog,
-linkedin, opportunity, research, spam, health).
+Natural language is routed to the matching Needle (tasks, calendar, ideas,
+github, blog, linkedin, opportunity, research, spam, health). Relative dates
+in calendar events ("tomorrow", "next monday", "in 3 days") are resolved
+automatically.
+
+## Calendar & Ideas
+
+Both are local to the server (SQLite), so they work without Notion.
+
+- **Calendar**: `/calendar` lists the next 7 days. `/calendar add gym
+  session tomorrow at 7am` schedules it — dates/times are extracted and
+  relative dates resolved automatically. `/remove_event <id>` removes one.
+  Today's/upcoming events appear in the morning briefing.
+- **Ideas**: `/ideas` lists open ideas. `/ideas add <idea>` captures one,
+  `/idea done <id>` or `/ideas done <id>` marks it done,
+  `/remove_idea <id>` deletes it.
+- **Tasks**: `/done <id>` completes a task (it disappears from `/tasks`),
+  `/remove <id>` or `/delete <id>` permanently removes it.
 
 ## Gmail spam needle
 

@@ -8,7 +8,16 @@ from app.agents import (
     morning,
     spam,
     health,
+    calendar,
+    ideas,
 )
+
+
+def _task_delete(ident):
+    try:
+        return task.delete_task(int(ident))
+    except Exception:
+        return {"error": "Usage: /remove <id>"}
 
 
 def route(t):
@@ -31,6 +40,44 @@ def route(t):
             return task.complete_task(int(l[6:].strip()))
         except Exception:
             return {"error": "Usage: /done <id>"}
+
+    if l.startswith("/remove "):
+        return _task_delete(l[8:].strip())
+
+    if l.startswith("/delete "):
+        return _task_delete(l[8:].strip())
+
+    if l == "/calendar":
+        return calendar.upcoming()
+
+    if l.startswith("/calendar "):
+        return calendar.run(t)
+
+    if l.startswith("/remove_event "):
+        try:
+            return calendar.remove(int(l[14:].strip()))
+        except Exception:
+            return {"error": "Usage: /remove_event <id>"}
+
+    if l == "/ideas":
+        return ideas.list_text()
+
+    if l.startswith("/idea done ") or l.startswith("/ideas done "):
+        ident = l[10:].strip() if l.startswith("/idea done ") else l[12:].strip()
+
+        try:
+            return ideas.complete(int(ident))
+        except Exception:
+            return {"error": "Usage: /ideas done <id>"}
+
+    if l.startswith("/ideas ") or l.startswith("/idea "):
+        return ideas.run(t)
+
+    if l.startswith("/remove_idea "):
+        try:
+            return ideas.remove(int(l[12:].strip()))
+        except Exception:
+            return {"error": "Usage: /remove_idea <id>"}
 
     if l == "/blogs":
         return blog.run("Fetch new posts, curate them, and show interesting ones.")
@@ -70,5 +117,11 @@ def route(t):
 
     if any(x in l for x in ["server health", "health", "server status", "how is the server"]):
         return health.run()
+
+    if any(x in l for x in ["calendar", "appointment", "meeting", "add event"]):
+        return calendar.run(t)
+
+    if any(x in l for x in ["idea", "ideas", "brainstorm"]):
+        return ideas.run(t)
 
     return task.run(t)

@@ -43,6 +43,87 @@ def tasks_complete(task_id: int) -> dict:
 
 
 @mcp.tool()
+def tasks_delete(task_id: int) -> dict:
+    """Permanently delete a task by id."""
+    removed = state.delete_task(task_id)
+
+    if not removed:
+        return {"error": "Task not found"}
+
+    return {"ok": True, "removed": task_id}
+
+
+@mcp.tool()
+def calendar_list(
+    from_date: str = "",
+    days: int = 7,
+) -> list[dict]:
+    """List calendar events from a date (YYYY-MM-DD) forward."""
+    return state.list_calendar_events(from_date, days)
+
+
+@mcp.tool()
+def calendar_add(
+    title: str,
+    event_date: str,
+    event_time: str = "",
+    details: str = "",
+) -> list[dict]:
+    """Add a calendar event. event_date is YYYY-MM-DD."""
+    return state.add_calendar_event(
+        title,
+        event_date,
+        event_time,
+        details,
+    )
+
+
+@mcp.tool()
+def calendar_remove(event_id: int) -> dict:
+    """Remove a calendar event by id."""
+    state.remove_calendar_event(event_id)
+    return {"ok": True, "removed": event_id}
+
+
+@mcp.tool()
+def ideas_list(status: str = "open") -> list[dict]:
+    """List ideas. status: open, done, or all."""
+    return state.list_ideas(status)
+
+
+@mcp.tool()
+def ideas_add(title: str, details: str = "") -> dict:
+    """Save a new idea."""
+    state.add_idea(title, details)
+    return {"ok": True, "title": title}
+
+
+@mcp.tool()
+def ideas_update(
+    idea_id: int,
+    title: str | None = None,
+    details: str | None = None,
+) -> dict:
+    """Update an idea's title and/or details."""
+    state.update_idea(idea_id, title, details)
+    return {"ok": True, "updated": idea_id}
+
+
+@mcp.tool()
+def ideas_complete(idea_id: int) -> dict:
+    """Mark an idea as done."""
+    state.complete_idea(idea_id)
+    return {"ok": True, "completed": idea_id}
+
+
+@mcp.tool()
+def ideas_remove(idea_id: int) -> dict:
+    """Permanently remove an idea by id."""
+    state.remove_idea(idea_id)
+    return {"ok": True, "removed": idea_id}
+
+
+@mcp.tool()
 def reminders_schedule(
     task_id: int,
     remind_at: str,
