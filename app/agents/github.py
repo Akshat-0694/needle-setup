@@ -5,6 +5,7 @@ import math
 import subprocess
 from datetime import datetime, timezone
 from urllib.parse import urlencode
+from app.integrations.needle_notion import persist_github
 
 
 TECHNICAL_TERMS = {
@@ -551,13 +552,42 @@ def scan(limit=20):
         reverse=True,
     )
 
+    # Persist interesting GitHub projects into Notion.
+    notion_persisted = 0
+    notion_failed = 0
+
+    for item in final:
+        if not item.get("interesting"):
+            continue
+
+        try:
+            result = persist_github(item)
+
+            if result.get("ok"):
+                notion_persisted += 1
+            else:
+                notion_failed += 1
+
+        except Exception as exc:
+            notion_failed += 1
+            print(
+                f"[github] Notion persistence failed for "
+                f"{item.get('repo')}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
     return {
-        "trending_open_source": trending,
-        "research_implementations": research,
-        "all": final,
         "count": len(final),
+        "trending_open_source": [
+            x for x in final
+            if x.get("category") == "trending_open_source"
+        ],
+        "research_implementations": [
+            x for x in final
+            if x.get("category") == "research_implementation"
+        ],
+        "notion_persisted": notion_persisted,
+        "notion_failed": notion_failed,
     }
-
-
 def run(prompt="Scan GitHub"):
     return scan()

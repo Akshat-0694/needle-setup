@@ -4,96 +4,159 @@ from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app import state
+
 from app.transports.telegram import send_message
+
+from app.agents.blog import scan as blog_scan
+from app.agents.github import scan as github_scan
 
 
 def build_blog_digest(articles):
-    lines = ["🔥 High-signal industry reads", ""]
+    lines = [
+        "🔥 High-signal industry reads",
+        "",
+    ]
 
     for i, article in enumerate(articles, 1):
-        title = article.get("title", "Untitled")
-        source = article.get("source", "Unknown source")
-        summary = article.get("summary") or "No summary available."
-        url = article.get("url", "")
+        title = article.get(
+            "title",
+            "Untitled",
+        )
 
-        lines.append(f"{i}. {title}")
-        lines.append(f"   {source}")
-        lines.append(f"   {summary}")
-        lines.append(f"   {url}")
+        source = article.get(
+            "source",
+            "Unknown source",
+        )
+
+        summary = (
+            article.get("summary")
+            or "No summary available."
+        )
+
+        url = article.get(
+            "url",
+            "",
+        )
+
+        lines.append(
+            f"{i}. {title}"
+        )
+
+        lines.append(
+            f"   {source}"
+        )
+
+        lines.append(
+            f"   {summary}"
+        )
+
+        lines.append(
+            f"   {url}"
+        )
+
         lines.append("")
 
-    return "\n".join(lines).strip()
+    return "\n".join(
+        lines
+    ).strip()
 
 
 def build_github_digest(repositories):
     trending = [
-        repo
-        for repo in repositories
-        if repo.get("category") == "trending_open_source"
+        x
+        for x in repositories
+        if x.get("category")
+        == "trending_open_source"
     ]
 
     research = [
-        repo
-        for repo in repositories
-        if repo.get("category") == "research_implementation"
+        x
+        for x in repositories
+        if x.get("category")
+        == "research_implementation"
     ]
 
-    lines = ["🐙 GitHub — High-signal projects", ""]
+    lines = [
+        "🐙 GitHub — High-signal projects",
+        "",
+    ]
 
     if trending:
-        lines.append("🔥 Trending open source")
-        lines.append("")
+        lines.extend([
+            "🔥 Trending open source",
+            "",
+        ])
 
-        for i, repo in enumerate(trending, 1):
-            name = repo.get("repo", "Unknown repository")
-            stars = repo.get("stars", 0)
-            score = repo.get("score", 0.0)
-            signals = repo.get("technical_signals") or []
-            url = repo.get("url", "")
+        for i, repo in enumerate(
+            trending,
+            1,
+        ):
+            lines.append(
+                f"{i}. {repo.get('repo', 'Unknown')}"
+            )
 
-            lines.append(f"{i}. {name}")
-            lines.append(f"   ⭐ {stars:,} | Score: {score:.3f}")
+            lines.append(
+                f"   ⭐ {repo.get('stars', 0):,} "
+                f"| Score: {repo.get('score', 0):.3f}"
+            )
+
+            signals = (
+                repo.get("technical_signals")
+                or []
+            )
 
             if signals:
                 lines.append(
-                    "   Signals: " + ", ".join(signals)
+                    "   Signals: "
+                    + ", ".join(signals)
                 )
 
-            if url:
-                lines.append(f"   {url}")
+            lines.append(
+                f"   {repo.get('url', '')}"
+            )
 
             lines.append("")
 
     if research:
-        lines.append("🧪 Research implementations")
-        lines.append("")
+        lines.extend([
+            "🧪 Research implementations",
+            "",
+        ])
 
-        for i, repo in enumerate(research, 1):
-            name = repo.get("repo", "Unknown repository")
-            stars = repo.get("stars", 0)
-            score = repo.get("score", 0.0)
-            signals = repo.get("research_signals") or []
-            url = repo.get("url", "")
-            readme_verified = repo.get(
-                "readme_verified",
-                False,
+        for i, repo in enumerate(
+            research,
+            1,
+        ):
+            lines.append(
+                f"{i}. {repo.get('repo', 'Unknown')}"
             )
 
-            lines.append(f"{i}. {name}")
-            lines.append(f"   ⭐ {stars:,} | Score: {score:.3f}")
+            lines.append(
+                f"   ⭐ {repo.get('stars', 0):,} "
+                f"| Score: {repo.get('score', 0):.3f}"
+            )
+
+            signals = (
+                repo.get("research_signals")
+                or []
+            )
 
             if signals:
                 lines.append(
-                    "   Research: " + ", ".join(signals)
+                    "   Research: "
+                    + ", ".join(signals)
+                )
+
+            if repo.get(
+                "readme_verified"
+            ):
+                lines.append(
+                    "   README verified: yes"
                 )
 
             lines.append(
-                "   README verified: "
-                + ("yes" if readme_verified else "no")
+                f"   {repo.get('url', '')}"
             )
-
-            if url:
-                lines.append(f"   {url}")
 
             lines.append("")
 
@@ -101,91 +164,170 @@ def build_github_digest(repositories):
 
 
 def check_blog_notifications():
-    articles = state.unnotified_interesting_articles(5)
+    articles = (
+        state.unnotified_interesting_articles(5)
+    )
 
     if not articles:
         return
 
-    text = build_blog_digest(articles)
+    text = build_blog_digest(
+        articles
+    )
 
     try:
         send_message(text)
 
         state.mark_articles_notified(
-            [article["url"] for article in articles]
+            [
+                article["url"]
+                for article in articles
+            ]
         )
 
         print(
-            f"[scheduler] sent blog digest: "
+            "[scheduler] sent blog digest: "
             f"{len(articles)} articles",
             flush=True,
         )
 
     except Exception as exc:
         print(
-            f"[scheduler] blog notification failed: {exc}",
+            "[scheduler] blog notification failed: "
+            f"{type(exc).__name__}: {exc}",
             flush=True,
         )
 
 
 def check_github_notifications():
-    repositories = state.unnotified_github(10)
+    repositories = (
+        state.unnotified_github(5)
+    )
 
     if not repositories:
         return
 
-    text = build_github_digest(repositories)
+    text = build_github_digest(
+        repositories
+    )
 
     try:
         send_message(text)
 
         state.mark_github_notified(
-            [repo["repo"] for repo in repositories]
+            [
+                repo["repo"]
+                for repo in repositories
+            ]
         )
 
         print(
-            f"[scheduler] sent GitHub digest: "
+            "[scheduler] sent GitHub digest: "
             f"{len(repositories)} repositories",
             flush=True,
         )
 
     except Exception as exc:
         print(
-            f"[scheduler] GitHub notification failed: {exc}",
+            "[scheduler] GitHub notification failed: "
+            f"{type(exc).__name__}: {exc}",
             flush=True,
         )
 
 
 def check_reminders():
     now = datetime.now(
-        ZoneInfo(settings.timezone)
+        ZoneInfo(
+            settings.timezone
+        )
     ).isoformat()
 
     for reminder in state.due_reminders(now):
         try:
             send_message(
-                "⏰ Reminder: " + reminder["title"]
+                "⏰ Reminder: "
+                + reminder["title"]
             )
 
-            state.mark_sent(reminder["id"])
+            state.mark_sent(
+                reminder["id"]
+            )
 
         except Exception as exc:
             print(
-                f"[scheduler] reminder failed: {exc}",
+                "[scheduler] reminder failed: "
+                f"{type(exc).__name__}: {exc}",
                 flush=True,
             )
 
 
+def refresh_sources():
+    """
+    Run discovery/curation pipelines.
+
+    The pipelines themselves persist interesting results
+    into the local SQLite state and Notion.
+    """
+
+    try:
+        blog_result = blog_scan(20)
+
+        print(
+            "[scheduler] blog scan: "
+            f"discovered={blog_result.get('discovered', 0)} "
+            f"evaluated={blog_result.get('evaluated', 0)} "
+            f"interesting="
+            f"{len(blog_result.get('interesting', []))}",
+            flush=True,
+        )
+
+    except Exception as exc:
+        print(
+            "[scheduler] blog scan failed: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+    try:
+        github_result = github_scan(20)
+
+        print(
+            "[scheduler] GitHub scan: "
+            f"count={github_result.get('count', 0)} "
+            f"Notion="
+            f"{github_result.get('notion_persisted', 0)}",
+            flush=True,
+        )
+
+    except Exception as exc:
+        print(
+            "[scheduler] GitHub scan failed: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
 def main():
     print(
-        f"[scheduler] running in {settings.timezone}",
+        "[scheduler] running in "
+        f"{settings.timezone}",
         flush=True,
     )
 
+    last_refresh = 0
+
     while True:
+        now = time.time()
+
+        # Discovery every 15 minutes.
+        if now - last_refresh >= 900:
+            refresh_sources()
+            last_refresh = now
+
         check_reminders()
         check_blog_notifications()
         check_github_notifications()
+
         time.sleep(15)
 
 

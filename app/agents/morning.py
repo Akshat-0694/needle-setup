@@ -1,3 +1,4 @@
+from app.agents.notion import notion_search, notion_read_page, notion_create_page, notion_update_page
 import needle
 
 from app.mcp.client import call

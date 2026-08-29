@@ -2,6 +2,7 @@ from app import state
 import re
 
 from app.mcp.client import call
+from app.integrations.needle_notion import persist_blog
 
 
 POSITIVE = {
@@ -475,6 +476,28 @@ def scan(candidate_limit=30):
         key=lambda x: x["score"],
         reverse=True,
     )
+
+
+    # Persist interesting blog articles into Notion.
+    notion_persisted = 0
+    notion_failed = 0
+
+    for item in interesting:
+        try:
+            result = persist_blog(item)
+
+            if result.get("ok"):
+                notion_persisted += 1
+            else:
+                notion_failed += 1
+
+        except Exception as exc:
+            notion_failed += 1
+            print(
+                f"[blog] Notion persistence failed for "
+                f"{item.get('title')}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
     return {
         "discovered": (
