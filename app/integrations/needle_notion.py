@@ -1,9 +1,16 @@
+from app.config import settings
 from app.integrations import notion
 
 
 NEEDLE_DAILY_DATA_SOURCE = (
-    "3cbddaaf-2318-808d-8a01-000bf855c0b4"
+    settings.notion_parent_github
 )
+
+PARENT_BY_KIND = {
+    "github": settings.notion_parent_github,
+    "blog": settings.notion_parent_blog,
+    "research": settings.notion_parent_research,
+}
 
 
 def _title_for(item, kind):
@@ -152,8 +159,13 @@ def persist(item, kind):
             "url": url,
         }
 
-    result = notion.create_page(
+    parent_id = PARENT_BY_KIND.get(
+        kind,
         NEEDLE_DAILY_DATA_SOURCE,
+    )
+
+    result = notion.create_page(
+        parent_id,
         title,
         markdown,
     )

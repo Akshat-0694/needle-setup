@@ -86,7 +86,7 @@ def blog_fetch_new(
 
     output = []
 
-    sources_path = Path("/app/data/sources.json")
+    sources_path = Path(settings.data_dir) / "sources.json"
 
     if not sources_path.exists():
         return []
@@ -204,7 +204,7 @@ def research_fetch_url(
 
 
 @mcp.tool()
-def opportunity_import_profiles(
+def linkedin_import_profiles(
     profiles: list[dict],
 ) -> dict:
     """Import approved/user-provided network profiles.
@@ -229,7 +229,7 @@ def opportunity_import_profiles(
 
 
 @mcp.tool()
-def opportunity_candidates(
+def linkedin_candidates(
     limit: int = 50,
 ) -> list[dict]:
     """Get unscored network profiles."""
@@ -238,7 +238,7 @@ def opportunity_candidates(
 
 
 @mcp.tool()
-def opportunity_save_score(
+def linkedin_save_score(
     profile_url: str,
     score: float,
     interesting: bool,
@@ -264,12 +264,190 @@ def opportunity_save_score(
 
 
 @mcp.tool()
-def opportunity_interesting(
+def linkedin_interesting(
     limit: int = 20,
 ) -> list[dict]:
     """Get high-value network candidates."""
 
     return state.interesting_people(limit)
+
+
+@mcp.tool()
+def opportunity_list() -> list[dict]:
+    """List all watched opportunities."""
+
+    return state.list_opportunities()
+
+
+@mcp.tool()
+def opportunity_add(
+    url: str,
+    title: str,
+    note: str = "",
+) -> list[dict]:
+    """Start watching an opportunity. Upserts by URL."""
+
+    return state.add_opportunity(url, title, note)
+
+
+@mcp.tool()
+def opportunity_remove(
+    id: int,
+) -> dict:
+    """Stop watching an opportunity by its id."""
+
+    state.remove_opportunity(id)
+
+    return {"ok": True, "removed": id}
+
+
+@mcp.tool()
+def kaggle_discover(
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Discover active Kaggle competitions, datasets, and notebooks.
+
+    Uses the Kaggle API v1 with KAGGLE_USERNAME / KAGGLE_KEY.
+    Returns an empty list when Kaggle is not configured.
+    """
+
+    import base64
+    import os
+
+    username = os.getenv("KAGGLE_USERNAME", "")
+    key = os.getenv("KAGGLE_KEY", "")
+
+    if not username or not key:
+        return []
+
+    auth = "Basic " + base64.b64encode(
+        f"{username}:{key}".encode("utf-8")
+    ).decode("ascii")
+
+    headers = {
+        "Authorization": auth,
+        "User-Agent": "NeedleDaily/2.0",
+    }
+
+    limit = max(1, min(int(limit), 100))
+
+    items = []
+
+    # --- Competitions ---
+    try:
+        response = httpx.get(
+            "https://www.kaggle.com/api/v1/competitions/list",
+            headers=headers,
+            timeout=30,
+            follow_redirects=True,
+        )
+
+        response.raise_for_status()
+
+        for comp in response.json()[:limit]:
+            ref = comp.get("ref")
+
+            if not ref:
+                continue
+
+            items.append({
+                "item_id": "competition:" + ref,
+                "kind": "competition",
+                "title": comp.get("title") or ref,
+                "url": "https://www.kaggle.com/competitions/" + ref,
+                "subtitle": comp.get("subtitle") or "",
+                "team_count": int(comp.get("teamCount") or 0),
+                "reward": comp.get("reward") or "",
+                "deadline": comp.get("deadline") or "",
+            })
+    except Exception:
+        pass
+
+    # --- Datasets ---
+    try:
+        response = httpx.get(
+            "https://www.kaggle.com/api/v1/datasets/list",
+            params={
+                "sortBy": "updated",
+                "pageSize": limit,
+            },
+            headers=headers,
+            timeout=30,
+            follow_redirects=True,
+        )
+
+        response.raise_for_status()
+
+        for ds in response.json()[:limit]:
+            owner = (
+                ds.get("ownerName")
+                or (ds.get("owner") or {}).get("userName", "")
+            )
+
+            title = ds.get("title") or ""
+
+            ref = ds.get("ref") or (
+                f"{owner}/{title.replace(' ', '-')}"
+                if owner and title
+                else ""
+            )
+
+            if not ref:
+                continue
+
+            items.append({
+                "item_id": "dataset:" + ref,
+                "kind": "dataset",
+                "title": title or ref,
+                "url": "https://www.kaggle.com/datasets/" + ref,
+                "subtitle": ds.get("subtitle") or "",
+                "download_count": int(ds.get("downloadCount") or 0),
+                "total_bytes": int(ds.get("totalBytes") or 0),
+                "last_updated": ds.get("lastUpdated") or "",
+            })
+    except Exception:
+        pass
+
+    # --- Notebooks (kernels) ---
+    try:
+        response = httpx.get(
+            "https://www.kaggle.com/api/v1/kernels/list",
+            params={
+                "page": 1,
+                "pageSize": limit,
+                "sortBy": "hotness",
+            },
+            headers=headers,
+            timeout=30,
+            follow_redirects=True,
+        )
+
+        response.raise_for_status()
+
+        for kn in response.json()[:limit]:
+            author = kn.get("author", "")
+            slug = kn.get("slug", "")
+
+            if not author or not slug:
+                continue
+
+            items.append({
+                "item_id": "notebook:" + author + "/" + slug,
+                "kind": "notebook",
+                "title": kn.get("title") or slug,
+                "url": (
+                    "https://www.kaggle.com/code/"
+                    + author + "/" + slug
+                ),
+                "subtitle": kn.get("subtitle") or "",
+                "total_votes": int(kn.get("totalVotes") or 0),
+                "total_views": int(kn.get("totalViews") or 0),
+            })
+    except Exception:
+        pass
+
+    return items
 
 
 # ============================================================

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.mcp.client import call
 from app.integrations import needle_notion
+from app.agents.util import render
 from app import state
 
 
@@ -1574,61 +1575,15 @@ def curate_hf_models(
     }
 
 def interesting_hf_models(limit=20):
-    rows = state.db.execute(
-        """
-        SELECT *
-        FROM huggingface_models
-        WHERE interesting=1
-        ORDER BY score DESC, trending_score DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
-
-    return [dict(r) for r in rows]
+    return state.interesting_hf_models(limit)
 
 
 def unnotified_hf_models(limit=20):
-    rows = state.db.execute(
-        """
-        SELECT *
-        FROM huggingface_models
-        WHERE interesting=1
-          AND notified=0
-        ORDER BY score DESC, trending_score DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
-
-    return [dict(r) for r in rows]
+    return state.unnotified_hf_models(limit)
 
 
 def mark_hf_models_notified(model_ids):
-    if not model_ids:
-        return
-
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    now = datetime.now(
-        ZoneInfo(settings.timezone)
-    ).isoformat()
-
-    state.db.executemany(
-        """
-        UPDATE huggingface_models
-        SET notified=1,
-            notified_at=?
-        WHERE model_id=?
-        """,
-        [
-            (now, model_id)
-            for model_id in model_ids
-        ],
-    )
-
-    state.db.commit()
+    return state.mark_hf_models_notified(model_ids)
 
 def interesting_arxiv_papers(limit=20):
     return state.interesting_research_papers(
@@ -1643,23 +1598,28 @@ def interesting_arxiv_papers(limit=20):
 def run(
     prompt="Research the latest high-signal technical developments."
 ):
-    # IMPORTANT:
-    # The synthesis Needle receives already-fetched content and
-    # must not have network tools available. This prevents it
-    # from hallucinating or recursively corrupting URLs.
     agent = needle.Needle(
-        tools=[],
+        tools=[
+            fetch_url,
+            arxiv_discover,
+            interesting_blogs,
+            interesting_github,
+        ],
         system=(
-            "You are a technical research analyst. "
-            "Analyze only the source material supplied in the prompt. "
-            "Do not fetch URLs. Do not invent URLs. "
-            "Do not claim evidence that is not present in the source."
+            "You are Info Needle, a technical research analyst. "
+            "Use fetch_url to read public web pages, arxiv_discover to "
+            "find recent papers, and interesting_blogs / interesting_github "
+            "to pull curated material. Only claim information that a tool "
+            "actually returned. Do not invent URLs. Keep the summary "
+            "concise and technical."
         ),
     )
 
-    return agent.complete(
-        prompt,
-        max_new_tokens=768,
+    return render(
+        agent.run(
+            prompt,
+            max_new_tokens=768,
+        )
     )
 
 

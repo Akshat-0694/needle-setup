@@ -3,8 +3,10 @@ import json
 
 from mcp import Client
 
+from app.config import settings
 
-MCP_URL = "http://mcp:9000/mcp"
+
+MCP_URL = settings.mcp_url
 
 
 def normalize(value):

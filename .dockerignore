@@ -1,0 +1,12 @@
+.git
+.gitignore
+.gitattributes
+.env
+__pycache__/
+*.pyc
+*.bak
+*.bak.*
+hehe
+README.md
+scripts/
+data/*.db

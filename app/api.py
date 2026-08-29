@@ -26,7 +26,7 @@ def health():
             settings.telegram_bot_token
             and settings.telegram_chat_id
         ),
-        "mcp": "http://mcp:9000/mcp",
+        "mcp": settings.mcp_url,
     }
 
 

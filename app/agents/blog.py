@@ -482,7 +482,10 @@ def scan(candidate_limit=30):
     notion_persisted = 0
     notion_failed = 0
 
-    for item in interesting:
+    for item in results:
+        if not item.get("interesting"):
+            continue
+
         try:
             result = persist_blog(item)
 
@@ -515,80 +518,49 @@ def scan(candidate_limit=30):
     }
 
 
-def run(prompt="Scan my industry blogs"):
-    return scan()
+def _digest(items):
+    if not items:
+        return "No interesting articles found."
 
+    lines = [
+        "🔥 High-signal industry reads",
+        "",
+    ]
 
-def refresh_interesting_summaries(limit=100):
-    """Re-fetch existing interesting articles and refresh their summaries."""
+    for i, article in enumerate(items, 1):
+        lines.append(
+            f"{i}. {article.get('title', 'Untitled')}"
+        )
 
-    articles = state.interesting_articles(limit)
-    refreshed = []
-    failed = []
+        source = article.get("source", "")
 
-    for article in articles:
+        if source:
+            lines.append(f"   {source}")
+
+        summary = article.get("summary")
+
+        if summary:
+            lines.append(f"   {summary[:250]}")
+
         url = article.get("url")
 
-        if not url:
-            continue
+        if url:
+            lines.append(f"   {url}")
 
-        try:
-            article_data = read_article(url)
+        lines.append("")
 
-            if isinstance(article_data, dict):
-                content = article_data.get("content", "")
-            else:
-                content = str(article_data)
+    return "\n".join(lines).strip()
 
-            extracted = clean_article_content(content)
 
-            if not article_content_is_valid(extracted):
-                failed.append({
-                    "title": article.get("title"),
-                    "url": url,
-                    "reason": "invalid extracted content",
-                })
-                continue
+def run(prompt="Scan my industry blogs"):
+    result = scan()
 
-            summary = summarize_text(extracted)
+    interesting = result.get("interesting", [])
 
-            if not summary:
-                failed.append({
-                    "title": article.get("title"),
-                    "url": url,
-                    "reason": "empty summary",
-                })
-                continue
+    if interesting:
+        return _digest(interesting)
 
-            # Preserve the existing score and interesting flag.
-            save_article(
-                url=url,
-                score=article.get("score", 0.0),
-                interesting=bool(
-                    article.get("interesting", False)
-                ),
-                summary=summary,
-            )
-
-            refreshed.append({
-                "title": article.get("title"),
-                "url": url,
-                "summary": summary,
-            })
-
-        except Exception as exc:
-            failed.append({
-                "title": article.get("title"),
-                "url": url,
-                "reason": f"{type(exc).__name__}: {exc}",
-            })
-
-    return {
-        "refreshed": len(refreshed),
-        "failed": len(failed),
-        "articles": refreshed,
-        "errors": failed,
-    }
+    return str(result)
 
 
 def refresh_interesting_summaries(limit=100):

@@ -553,3 +553,377 @@ def mark_github_notified(repos):
     )
 
     db.commit()
+
+
+# --- Hugging Face model persistence ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS huggingface_models(
+    model_id TEXT PRIMARY KEY,
+    url TEXT UNIQUE NOT NULL,
+    author TEXT DEFAULT '',
+    pipeline_tag TEXT DEFAULT '',
+    library_name TEXT DEFAULT '',
+    tags TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    downloads INTEGER DEFAULT 0,
+    likes INTEGER DEFAULT 0,
+    trending_score REAL DEFAULT 0,
+    created_at_hf TEXT,
+    last_modified TEXT,
+    deterministic_score REAL DEFAULT 0,
+    score REAL DEFAULT 0,
+    interesting INTEGER DEFAULT 0,
+    reason TEXT DEFAULT '',
+    technical_area TEXT DEFAULT '',
+    notified INTEGER DEFAULT 0,
+    notified_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def upsert_hf_model(item):
+    tags = item.get("tags") or []
+
+    if isinstance(tags, (list, tuple, set)):
+        tags = ", ".join(str(x) for x in tags if x)
+    else:
+        tags = str(tags or "")
+
+    db.execute(
+        """
+        INSERT INTO huggingface_models(
+            model_id, url, author, pipeline_tag, library_name, tags,
+            description, downloads, likes, trending_score, created_at_hf,
+            last_modified, deterministic_score, score, interesting, reason,
+            technical_area
+        )
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(model_id) DO UPDATE SET
+            url=excluded.url,
+            author=excluded.author,
+            pipeline_tag=excluded.pipeline_tag,
+            library_name=excluded.library_name,
+            tags=excluded.tags,
+            description=excluded.description,
+            downloads=excluded.downloads,
+            likes=excluded.likes,
+            trending_score=excluded.trending_score,
+            created_at_hf=excluded.created_at_hf,
+            last_modified=excluded.last_modified,
+            deterministic_score=excluded.deterministic_score,
+            score=excluded.score,
+            interesting=excluded.interesting,
+            reason=excluded.reason,
+            technical_area=excluded.technical_area
+        """,
+        (
+            item.get("model_id", ""),
+            item.get("url", ""),
+            item.get("author", ""),
+            item.get("pipeline_tag", ""),
+            item.get("library_name", ""),
+            tags,
+            item.get("description", ""),
+            int(item.get("downloads") or 0),
+            int(item.get("likes") or 0),
+            float(item.get("trending_score") or 0),
+            item.get("created_at_hf") or item.get("createdAt"),
+            item.get("last_modified") or item.get("lastModified"),
+            item.get("deterministic_score", 0.0),
+            item.get("score", 0.0),
+            int(bool(item.get("interesting", False))),
+            item.get("reason", ""),
+            item.get("technical_area", ""),
+        ),
+    )
+
+    db.commit()
+
+
+def interesting_hf_models(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM huggingface_models
+        WHERE interesting=1
+        ORDER BY score DESC, trending_score DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def unnotified_hf_models(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM huggingface_models
+        WHERE interesting=1
+          AND notified=0
+        ORDER BY score DESC, trending_score DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def mark_hf_models_notified(model_ids):
+    if not model_ids:
+        return
+
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    db.executemany(
+        """
+        UPDATE huggingface_models
+        SET notified=1,
+            notified_at=?
+        WHERE model_id=?
+        """,
+        [(now, model_id) for model_id in model_ids],
+    )
+
+    db.commit()
+
+
+# --- Watched opportunities (availability checker) ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS opportunities(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'unknown',
+    last_checked_at TEXT,
+    last_result TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def list_opportunities():
+    rows = db.execute(
+        """
+        SELECT *
+        FROM opportunities
+        ORDER BY id DESC
+        """
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def add_opportunity(url, title, note=""):
+    db.execute(
+        """
+        INSERT INTO opportunities(url, title, note)
+        VALUES(?,?,?)
+        ON CONFLICT(url) DO UPDATE SET
+            title=excluded.title,
+            note=excluded.note
+        """,
+        (url, title, note),
+    )
+
+    db.commit()
+
+    return list_opportunities()
+
+
+def remove_opportunity(opportunity_id):
+    db.execute(
+        "DELETE FROM opportunities WHERE id=?",
+        (opportunity_id,),
+    )
+
+    db.commit()
+
+
+def opportunities_to_check():
+    """Opportunities that are not currently marked available."""
+    rows = db.execute(
+        """
+        SELECT *
+        FROM opportunities
+        WHERE status != 'available'
+        ORDER BY id
+        """
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def update_opportunity_status(opportunity_id, status, last_result=""):
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    db.execute(
+        """
+        UPDATE opportunities
+        SET status=?,
+            last_checked_at=?,
+            last_result=?
+        WHERE id=?
+        """,
+        (status, now, last_result, opportunity_id),
+    )
+
+    db.commit()
+
+
+# --- Kaggle item persistence ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS kaggle_items(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT UNIQUE NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT DEFAULT '',
+    subtitle TEXT DEFAULT '',
+    deterministic_score REAL DEFAULT 0,
+    score REAL DEFAULT 0,
+    interesting INTEGER DEFAULT 0,
+    reason TEXT DEFAULT '',
+    notified INTEGER DEFAULT 0,
+    notified_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+db.commit()
+
+
+def upsert_kaggle_item(item):
+    db.execute(
+        """
+        INSERT INTO kaggle_items(
+            item_id, kind, title, url, subtitle,
+            deterministic_score, score, interesting, reason
+        )
+        VALUES(?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(item_id) DO UPDATE SET
+            kind=excluded.kind,
+            title=excluded.title,
+            url=excluded.url,
+            subtitle=excluded.subtitle,
+            deterministic_score=excluded.deterministic_score,
+            score=excluded.score,
+            interesting=excluded.interesting,
+            reason=excluded.reason
+        """,
+        (
+            item.get("item_id", ""),
+            item.get("kind", ""),
+            item.get("title", ""),
+            item.get("url", ""),
+            item.get("subtitle", ""),
+            item.get("deterministic_score", 0.0),
+            item.get("score", 0.0),
+            int(bool(item.get("interesting", False))),
+            item.get("reason", ""),
+        ),
+    )
+
+    db.commit()
+
+
+def interesting_kaggle(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM kaggle_items
+        WHERE interesting=1
+        ORDER BY score DESC, id DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def unnotified_kaggle(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM kaggle_items
+        WHERE interesting=1
+          AND notified=0
+        ORDER BY score DESC, id DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def mark_kaggle_notified(item_ids):
+    if not item_ids:
+        return
+
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    db.executemany(
+        """
+        UPDATE kaggle_items
+        SET notified=1,
+            notified_at=?
+        WHERE item_id=?
+        """,
+        [(now, item_id) for item_id in item_ids],
+    )
+
+    db.commit()
+
+
+# --- Simple key/value store (scheduler bookkeeping) ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS kv(
+    key TEXT PRIMARY KEY,
+    value TEXT
+)
+""")
+
+db.commit()
+
+
+def set_kv(key, value):
+    db.execute(
+        """
+        INSERT INTO kv(key, value)
+        VALUES(?,?)
+        ON CONFLICT(key) DO UPDATE SET
+            value=excluded.value
+        """,
+        (key, str(value)),
+    )
+
+    db.commit()
+
+
+def get_kv(key, default=None):
+    row = db.execute(
+        "SELECT value FROM kv WHERE key=?",
+        (key,),
+    ).fetchone()
+
+    return row["value"] if row else default

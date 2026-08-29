@@ -589,5 +589,61 @@ def scan(limit=20):
         "notion_persisted": notion_persisted,
         "notion_failed": notion_failed,
     }
+def _digest(items):
+    if not items:
+        return "No interesting GitHub projects found."
+
+    lines = [
+        "🐙 GitHub — High-signal projects",
+        "",
+    ]
+
+    for i, repo in enumerate(items, 1):
+        lines.append(
+            f"{i}. {repo.get('repo', 'Unknown')}"
+        )
+
+        lines.append(
+            f"   ⭐ {repo.get('stars', 0):,} "
+            f"| Score: {repo.get('score', 0):.3f}"
+        )
+
+        signals = (
+            repo.get("technical_signals")
+            or repo.get("research_signals")
+            or []
+        )
+
+        if signals:
+            lines.append(
+                "   Signals: " + ", ".join(signals)
+            )
+
+        url = repo.get("url")
+
+        if url:
+            lines.append(f"   {url}")
+
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
 def run(prompt="Scan GitHub"):
-    return scan()
+    result = scan()
+
+    interesting = [
+        x for x in result.get(
+            "trending_open_source",
+            [],
+        ) + result.get(
+            "research_implementations",
+            [],
+        )
+        if x.get("interesting")
+    ]
+
+    if interesting:
+        return _digest(interesting)
+
+    return str(result)

@@ -1,22 +1,25 @@
 services:
   app:
     build: .
-    command: ["uvicorn","app.api:app","--host","0.0.0.0","--port","8000"]
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file: .env
-    environment:
-      NOTION_MCP_AUTH_TOKEN: ${NOTION_MCP_AUTH_TOKEN}
-    volumes: ["./data:/app/data"]
-    ports: ["127.0.0.1:8000:8000"]
+    volumes:
+      - "./data:/app/data"
+      - "needle-cache:/root/.cache/cactus-needle"
+    ports:
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
-    depends_on: [mcp, notion-mcp]
+    depends_on: [mcp]
+
   mcp:
     build: .
-    command: ["python","-m","app.mcp.server"]
+    command: ["python", "-m", "app.mcp.server"]
     env_file: .env
     volumes: ["./data:/app/data"]
     restart: unless-stopped
+
   notion-mcp:
-    image: mcp/notion
+    image: mcp/notion:latest
     command:
       [
         "--transport",
@@ -26,23 +29,33 @@ services:
         "--port",
         "3000",
         "--auth-token",
-        "${NOTION_MCP_AUTH_TOKEN}"
+        "${NOTION_MCP_AUTH_TOKEN}",
       ]
     environment:
       NOTION_TOKEN: ${NOTION_TOKEN}
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
+
   scheduler:
     build: .
-    command: ["python","-m","app.scheduler"]
+    command: ["python", "-m", "app.scheduler"]
     env_file: .env
-    volumes: ["./data:/app/data"]
-    restart: unless-stopped
-  telegram:
-    build: .
-    command: ["python","-m","app.transports.telegram_poll"]
-    env_file: .env
-    volumes: ["./data:/app/data"]
+    volumes:
+      - "./data:/app/data"
+      - "needle-cache:/root/.cache/cactus-needle"
     restart: unless-stopped
     depends_on: [mcp]
+
+  telegram:
+    build: .
+    command: ["python", "-m", "app.transports.telegram_poll"]
+    env_file: .env
+    volumes:
+      - "./data:/app/data"
+      - "needle-cache:/root/.cache/cactus-needle"
+    restart: unless-stopped
+    depends_on: [mcp]
+
+volumes:
+  needle-cache:

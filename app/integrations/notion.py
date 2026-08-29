@@ -5,11 +5,10 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from app.config import settings
 
-NOTION_MCP_URL = os.getenv(
-    "NOTION_MCP_URL",
-    "http://notion-mcp:3000/mcp",
-)
+
+NOTION_MCP_URL = settings.notion_mcp_url
 
 
 def _extract(result):
@@ -47,7 +46,12 @@ def _extract(result):
 
 
 async def _call_tool(tool_name, arguments=None):
-    token = os.environ["NOTION_MCP_AUTH_TOKEN"]
+    token = settings.notion_mcp_auth_token
+
+    if not token:
+        raise RuntimeError(
+            "NOTION_MCP_AUTH_TOKEN is not set"
+        )
 
     async with httpx.AsyncClient(
         headers={
