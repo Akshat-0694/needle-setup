@@ -1,3 +1,7 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import os,sqlite3,json
 from app.config import settings
 os.makedirs(settings.data_dir,exist_ok=True)
@@ -34,3 +38,211 @@ def import_person(p):
 def people_candidates(n=50): return [dict(r) for r in db.execute('SELECT * FROM people WHERE score IS NULL ORDER BY id DESC LIMIT ?',(n,)).fetchall()]
 def score_person(url,score,interesting,reason,hook): db.execute('UPDATE people SET score=?,interesting=?,reason=?,conversation_hook=? WHERE profile_url=?',(score,int(interesting),reason,hook,url));db.commit()
 def interesting_people(n=20): return [dict(r) for r in db.execute('SELECT * FROM people WHERE interesting=1 ORDER BY score DESC LIMIT ?',(n,)).fetchall()]
+
+
+def unnotified_interesting_articles(n=20):
+    rows = db.execute(
+        '''
+        SELECT *
+        FROM articles
+        WHERE interesting=1
+          AND notified=0
+        ORDER BY score DESC, id DESC
+        LIMIT ?
+        ''',
+        (n,),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+def mark_articles_notified(urls):
+    if not urls:
+        return
+
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    db.executemany(
+        '''
+        UPDATE articles
+        SET notified=1,
+            notified_at=?
+        WHERE url=?
+        ''',
+        [(now, url) for url in urls],
+    )
+
+    db.commit()
+
+# --- GitHub repository persistence ---
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS github_repositories(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT UNIQUE NOT NULL,
+    name TEXT,
+    description TEXT,
+    url TEXT,
+    stars INTEGER DEFAULT 0,
+    forks INTEGER DEFAULT 0,
+    updated_at TEXT,
+    category TEXT,
+    score REAL,
+    raw_score REAL,
+    technical_signals TEXT,
+    research_signals TEXT,
+    readme_signals TEXT,
+    readme_verified INTEGER DEFAULT 0,
+    interesting INTEGER DEFAULT 0,
+    notified INTEGER DEFAULT 0,
+    notified_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+article_columns = {
+    row[1]
+    for row in db.execute(
+        "PRAGMA table_info(articles)"
+    ).fetchall()
+}
+
+if "notified" not in article_columns:
+    db.execute(
+        "ALTER TABLE articles ADD COLUMN notified INTEGER DEFAULT 0"
+    )
+
+if "notified_at" not in article_columns:
+    db.execute(
+        "ALTER TABLE articles ADD COLUMN notified_at TEXT"
+    )
+
+db.commit()
+
+
+def upsert_github_repository(item):
+    db.execute(
+        """
+        INSERT INTO github_repositories(
+            repo,
+            name,
+            description,
+            url,
+            stars,
+            forks,
+            updated_at,
+            category,
+            score,
+            raw_score,
+            technical_signals,
+            research_signals,
+            readme_signals,
+            readme_verified,
+            interesting
+        )
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(repo) DO UPDATE SET
+            name=excluded.name,
+            description=excluded.description,
+            url=excluded.url,
+            stars=excluded.stars,
+            forks=excluded.forks,
+            updated_at=excluded.updated_at,
+            category=excluded.category,
+            score=excluded.score,
+            raw_score=excluded.raw_score,
+            technical_signals=excluded.technical_signals,
+            research_signals=excluded.research_signals,
+            readme_signals=excluded.readme_signals,
+            readme_verified=excluded.readme_verified,
+            interesting=excluded.interesting
+        """,
+        (
+            item.get("repo"),
+            item.get("name"),
+            item.get("description", ""),
+            item.get("url", ""),
+            item.get("stars", 0),
+            item.get("forks", 0),
+            item.get("updated_at", ""),
+            item.get("category", ""),
+            item.get("score", 0.0),
+            item.get("raw_score", 0.0),
+            json.dumps(item.get("technical_signals", [])),
+            json.dumps(item.get("research_signals", [])),
+            json.dumps(item.get("readme_signals", [])),
+            int(bool(item.get("readme_verified", False))),
+            int(bool(item.get("interesting", False))),
+        ),
+    )
+    db.commit()
+
+
+def _github_row_to_dict(row):
+    item = dict(row)
+
+    for key in (
+        "technical_signals",
+        "research_signals",
+        "readme_signals",
+    ):
+        try:
+            item[key] = json.loads(item[key] or "[]")
+        except Exception:
+            item[key] = []
+
+    return item
+
+
+def interesting_github(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM github_repositories
+        WHERE interesting=1
+        ORDER BY score DESC, stars DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [_github_row_to_dict(row) for row in rows]
+
+
+def unnotified_github(n=20):
+    rows = db.execute(
+        """
+        SELECT *
+        FROM github_repositories
+        WHERE interesting=1
+          AND notified=0
+        ORDER BY score DESC, stars DESC
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+    return [_github_row_to_dict(row) for row in rows]
+
+
+def mark_github_notified(repos):
+    if not repos:
+        return
+
+    now = datetime.now(
+        ZoneInfo(settings.timezone)
+    ).isoformat()
+
+    db.executemany(
+        """
+        UPDATE github_repositories
+        SET notified=1,
+            notified_at=?
+        WHERE repo=?
+        """,
+        [(now, repo) for repo in repos],
+    )
+
+    db.commit()
